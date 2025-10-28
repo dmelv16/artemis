@@ -1,0 +1,278 @@
+"""
+Main ETL Orchestrator for College Basketball Data
+Runs all ETL processes in the correct order
+"""
+
+import argparse
+from datetime import datetime
+from typing import List
+
+# Import all ETL classes
+from conferences_etl import ConferencesETL
+from venues_etl import VenuesETL
+from teams_etl import TeamsETL
+from games_etl import GamesETL
+from rankings_etl import RankingsETL
+from lines_etl import LinesETL
+from recruiting_etl import RecruitingETL
+from substitutions_etl import SubstitutionsETL
+from plays_etl import PlaysETL
+from lineups_etl import LineupsETL
+
+
+class MainETL:
+    """Main orchestrator for all college basketball ETL processes"""
+    
+    def __init__(self, api_key: str, db_connection: str):
+        self.api_key = api_key
+        self.db_connection = db_connection
+        self.start_time = None
+        
+    def log(self, message: str):
+        """Print timestamped log message"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] {message}")
+    
+    def run_reference_data(self):
+        """Run one-time reference data ETL (conferences, venues)"""
+        self.log("="*80)
+        self.log("PHASE 1: Reference Data (Conferences & Venues)")
+        self.log("="*80)
+        
+        try:
+            # Conferences
+            self.log("Running Conferences ETL...")
+            conferences_etl = ConferencesETL(self.api_key, self.db_connection)
+            conferences_etl.run_etl()
+            self.log("✓ Conferences complete\n")
+            
+            # Venues
+            self.log("Running Venues ETL...")
+            venues_etl = VenuesETL(self.api_key, self.db_connection)
+            venues_etl.run_etl()
+            self.log("✓ Venues complete\n")
+            
+        except Exception as e:
+            self.log(f"✗ Error in reference data: {e}")
+            raise
+    
+    def run_season_data(self, start_season: int, end_season: int):
+        """Run season-based ETL (teams, games, rankings, etc.)"""
+        self.log("="*80)
+        self.log(f"PHASE 2: Season Data ({start_season}-{end_season})")
+        self.log("="*80)
+        
+        try:
+            # Teams & Rosters
+            self.log("Running Teams & Rosters ETL...")
+            teams_etl = TeamsETL(self.api_key, self.db_connection)
+            teams_etl.run_etl(start_season, end_season)
+            self.log("✓ Teams & Rosters complete\n")
+            
+            # Games & Team Games
+            self.log("Running Games & Team Games ETL...")
+            games_etl = GamesETL(self.api_key, self.db_connection)
+            games_etl.run_etl(start_season, end_season)
+            self.log("✓ Games & Team Games complete\n")
+            
+            # Rankings
+            self.log("Running Rankings ETL...")
+            rankings_etl = RankingsETL(self.api_key, self.db_connection)
+            rankings_etl.run_etl(start_season, end_season)
+            self.log("✓ Rankings complete\n")
+            
+            # Betting Lines
+            self.log("Running Betting Lines ETL...")
+            lines_etl = LinesETL(self.api_key, self.db_connection)
+            lines_etl.run_etl(start_season, end_season)
+            self.log("✓ Betting Lines complete\n")
+            
+        except Exception as e:
+            self.log(f"✗ Error in season data: {e}")
+            raise
+    
+    def run_recruiting_data(self, start_year: int, end_year: int):
+        """Run recruiting data ETL"""
+        self.log("="*80)
+        self.log(f"PHASE 3: Recruiting Data ({start_year}-{end_year})")
+        self.log("="*80)
+        
+        try:
+            self.log("Running Recruiting ETL...")
+            recruiting_etl = RecruitingETL(self.api_key, self.db_connection)
+            recruiting_etl.run_etl(start_year, end_year)
+            self.log("✓ Recruiting complete\n")
+            
+        except Exception as e:
+            self.log(f"✗ Error in recruiting data: {e}")
+            raise
+    
+    def run_game_detail_data(self, start_season: int, end_season: int, 
+                            batch_size: int = 100):
+        """Run game-level detail ETL (substitutions, plays, lineups)"""
+        self.log("="*80)
+        self.log(f"PHASE 4: Game Detail Data ({start_season}-{end_season})")
+        self.log("="*80)
+        self.log("WARNING: This phase is time-intensive (requires fetching each game individually)")
+        
+        try:
+            # Substitutions
+            self.log("Running Substitutions ETL...")
+            substitutions_etl = SubstitutionsETL(self.api_key, self.db_connection)
+            substitutions_etl.run_etl(start_season, end_season, batch_size)
+            self.log("✓ Substitutions complete\n")
+            
+            # Play-by-Play
+            self.log("Running Play-by-Play ETL...")
+            plays_etl = PlaysETL(self.api_key, self.db_connection)
+            plays_etl.run_etl(start_season, end_season, batch_size)
+            self.log("✓ Play-by-Play complete\n")
+            
+            # Lineups
+            self.log("Running Lineups ETL...")
+            lineups_etl = LineupsETL(self.api_key, self.db_connection)
+            lineups_etl.run_etl(start_season, end_season, batch_size)
+            self.log("✓ Lineups complete\n")
+            
+        except Exception as e:
+            self.log(f"✗ Error in game detail data: {e}")
+            raise
+    
+    def run_full_etl(self, start_season: int = 2006, end_season: int = 2025,
+                     include_game_details: bool = False, batch_size: int = 100):
+        """Run complete ETL pipeline"""
+        self.start_time = datetime.now()
+        self.log("\n" + "="*80)
+        self.log("STARTING FULL ETL PIPELINE")
+        self.log("="*80 + "\n")
+        
+        try:
+            # Phase 1: Reference Data
+            self.run_reference_data()
+            
+            # Phase 2: Season Data
+            self.run_season_data(start_season, end_season)
+            
+            # Phase 3: Recruiting
+            self.run_recruiting_data(start_season, end_season)
+            
+            # Phase 4: Game Details (optional - very time intensive)
+            if include_game_details:
+                self.run_game_detail_data(start_season, end_season, batch_size)
+            else:
+                self.log("="*80)
+                self.log("PHASE 4: Game Detail Data - SKIPPED")
+                self.log("="*80)
+                self.log("To include substitutions, plays, and lineups, use --include-game-details")
+                self.log("Note: This will significantly increase runtime\n")
+            
+            # Complete
+            elapsed = datetime.now() - self.start_time
+            self.log("="*80)
+            self.log("ETL PIPELINE COMPLETE!")
+            self.log("="*80)
+            self.log(f"Total time: {elapsed}")
+            self.log("")
+            
+        except Exception as e:
+            elapsed = datetime.now() - self.start_time
+            self.log("="*80)
+            self.log(f"ETL PIPELINE FAILED: {e}")
+            self.log("="*80)
+            self.log(f"Time elapsed: {elapsed}")
+            raise
+
+
+def main():
+    """Main entry point with command line arguments"""
+    parser = argparse.ArgumentParser(
+        description='College Basketball Data ETL Pipeline',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run full pipeline for 2020-2025 seasons
+  python main_etl.py --start-season 2020 --end-season 2025
+
+  # Run only reference data
+  python main_etl.py --phases reference
+
+  # Run with game details (slow!)
+  python main_etl.py --start-season 2024 --end-season 2025 --include-game-details
+
+  # Run specific phases
+  python main_etl.py --phases reference season recruiting
+        """
+    )
+    
+    # API & Database config
+    parser.add_argument('--api-key', type=str, required=True,
+                        help='API key for collegebasketballdata.com')
+    parser.add_argument('--db-server', type=str, required=True,
+                        help='SQL Server name')
+    parser.add_argument('--db-name', type=str, required=True,
+                        help='Database name')
+    parser.add_argument('--db-user', type=str,
+                        help='Database username (optional for Windows auth)')
+    parser.add_argument('--db-password', type=str,
+                        help='Database password (optional for Windows auth)')
+    
+    # Season ranges
+    parser.add_argument('--start-season', type=int, default=2006,
+                        help='Starting season year (default: 2006)')
+    parser.add_argument('--end-season', type=int, default=2025,
+                        help='Ending season year (default: 2025)')
+    
+    # Options
+    parser.add_argument('--include-game-details', action='store_true',
+                        help='Include game-level details (substitutions, plays, lineups) - very slow!')
+    parser.add_argument('--batch-size', type=int, default=100,
+                        help='Batch size for game detail processing (default: 100)')
+    parser.add_argument('--phases', nargs='+', 
+                        choices=['reference', 'season', 'recruiting', 'game-details'],
+                        help='Run specific phases only')
+    
+    args = parser.parse_args()
+    
+    # Build connection string
+    if args.db_user and args.db_password:
+        db_connection = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={args.db_server};"
+            f"DATABASE={args.db_name};"
+            f"UID={args.db_user};"
+            f"PWD={args.db_password}"
+        )
+    else:
+        # Windows Authentication
+        db_connection = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={args.db_server};"
+            f"DATABASE={args.db_name};"
+            f"Trusted_Connection=yes;"
+        )
+    
+    # Initialize main ETL
+    main_etl = MainETL(args.api_key, db_connection)
+    
+    # Run specified phases or full pipeline
+    if args.phases:
+        if 'reference' in args.phases:
+            main_etl.run_reference_data()
+        if 'season' in args.phases:
+            main_etl.run_season_data(args.start_season, args.end_season)
+        if 'recruiting' in args.phases:
+            main_etl.run_recruiting_data(args.start_season, args.end_season)
+        if 'game-details' in args.phases:
+            main_etl.run_game_detail_data(args.start_season, args.end_season, args.batch_size)
+    else:
+        # Run full pipeline
+        main_etl.run_full_etl(
+            start_season=args.start_season,
+            end_season=args.end_season,
+            include_game_details=args.include_game_details,
+            batch_size=args.batch_size
+        )
+
+
+if __name__ == "__main__":
+    main()
