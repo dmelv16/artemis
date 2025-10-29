@@ -45,7 +45,7 @@ class GamesETL(BaseCollegeBasketballETL):
             venueId INT,
             venue NVARCHAR(200),
             city NVARCHAR(100),
-            state NVARCHAR(10)
+            state NVARCHAR(50)
         )
         """
         
@@ -285,7 +285,7 @@ class GamesETL(BaseCollegeBasketballETL):
         return inserted
     
     def insert_team_games(self, team_games: List[Dict], cursor) -> int:
-        """Insert team games into database"""
+        """Insert team games into database - 96 columns, 96 ? marks"""
         sql = """
         MERGE team_games AS target
         USING (SELECT ? AS gameId, ? AS teamId) AS source
@@ -312,16 +312,19 @@ class GamesETL(BaseCollegeBasketballETL):
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?);
+                    ?, ?, ?, ?, ?, ?, ?, ?);
         """
         
         inserted = 0
         for tg in team_games:
-            ts = tg.get('teamStats', {})
-            os = tg.get('opponentStats', {})
+            ts = tg.get('teamStats') or {}
+            os = tg.get('opponentStats') or {}
             
             params = (
-                tg.get('gameId'), tg.get('teamId'),  # MERGE condition
+                # MERGE (2)
+                tg.get('gameId'), tg.get('teamId'),
+                
+                # INSERT (96) = 22 + 37 + 37
                 tg.get('gameId'), tg.get('season'), tg.get('seasonLabel'),
                 tg.get('seasonType'), tg.get('tournament'),
                 self.parse_datetime(tg.get('startDate')), tg.get('startTimeTbd', False),
@@ -330,72 +333,72 @@ class GamesETL(BaseCollegeBasketballETL):
                 tg.get('opponentSeed'), tg.get('neutralSite', False), tg.get('isHome', False),
                 tg.get('conferenceGame', False), tg.get('gameType'), tg.get('notes'),
                 tg.get('gameMinutes'), tg.get('pace'),
-                # Team stats
+                # Team stats (37)
                 ts.get('possessions'), ts.get('assists'), ts.get('steals'), ts.get('blocks'),
                 ts.get('trueShooting'), ts.get('rating'), ts.get('gameScore'),
-                ts.get('points', {}).get('total'),
-                self.json_serialize(ts.get('points', {}).get('byPeriod')),
-                ts.get('points', {}).get('largestLead'),
-                ts.get('points', {}).get('fastBreak'),
-                ts.get('points', {}).get('inPaint'),
-                ts.get('points', {}).get('offTurnovers'),
-                ts.get('twoPointFieldGoals', {}).get('made'),
-                ts.get('twoPointFieldGoals', {}).get('attempted'),
-                ts.get('twoPointFieldGoals', {}).get('pct'),
-                ts.get('threePointFieldGoals', {}).get('made'),
-                ts.get('threePointFieldGoals', {}).get('attempted'),
-                ts.get('threePointFieldGoals', {}).get('pct'),
-                ts.get('freeThrows', {}).get('made'),
-                ts.get('freeThrows', {}).get('attempted'),
-                ts.get('freeThrows', {}).get('pct'),
-                ts.get('fieldGoals', {}).get('made'),
-                ts.get('fieldGoals', {}).get('attempted'),
-                ts.get('fieldGoals', {}).get('pct'),
-                ts.get('turnovers', {}).get('total'),
-                ts.get('turnovers', {}).get('teamTotal'),
-                ts.get('rebounds', {}).get('offensive'),
-                ts.get('rebounds', {}).get('defensive'),
-                ts.get('rebounds', {}).get('total'),
-                ts.get('fouls', {}).get('total'),
-                ts.get('fouls', {}).get('technical'),
-                ts.get('fouls', {}).get('flagrant'),
-                ts.get('fourFactors', {}).get('effectiveFieldGoalPct'),
-                ts.get('fourFactors', {}).get('freeThrowRate'),
-                ts.get('fourFactors', {}).get('turnoverRatio'),
-                ts.get('fourFactors', {}).get('offensiveReboundPct'),
-                # Opponent stats (same structure)
+                ts.get('points', {}).get('total') if ts.get('points') else None,
+                self.json_serialize(ts.get('points', {}).get('byPeriod')) if ts.get('points') else None,
+                ts.get('points', {}).get('largestLead') if ts.get('points') else None,
+                ts.get('points', {}).get('fastBreak') if ts.get('points') else None,
+                ts.get('points', {}).get('inPaint') if ts.get('points') else None,
+                ts.get('points', {}).get('offTurnovers') if ts.get('points') else None,
+                ts.get('twoPointFieldGoals', {}).get('made') if ts.get('twoPointFieldGoals') else None,
+                ts.get('twoPointFieldGoals', {}).get('attempted') if ts.get('twoPointFieldGoals') else None,
+                ts.get('twoPointFieldGoals', {}).get('pct') if ts.get('twoPointFieldGoals') else None,
+                ts.get('threePointFieldGoals', {}).get('made') if ts.get('threePointFieldGoals') else None,
+                ts.get('threePointFieldGoals', {}).get('attempted') if ts.get('threePointFieldGoals') else None,
+                ts.get('threePointFieldGoals', {}).get('pct') if ts.get('threePointFieldGoals') else None,
+                ts.get('freeThrows', {}).get('made') if ts.get('freeThrows') else None,
+                ts.get('freeThrows', {}).get('attempted') if ts.get('freeThrows') else None,
+                ts.get('freeThrows', {}).get('pct') if ts.get('freeThrows') else None,
+                ts.get('fieldGoals', {}).get('made') if ts.get('fieldGoals') else None,
+                ts.get('fieldGoals', {}).get('attempted') if ts.get('fieldGoals') else None,
+                ts.get('fieldGoals', {}).get('pct') if ts.get('fieldGoals') else None,
+                ts.get('turnovers', {}).get('total') if ts.get('turnovers') else None,
+                ts.get('turnovers', {}).get('teamTotal') if ts.get('turnovers') else None,
+                ts.get('rebounds', {}).get('offensive') if ts.get('rebounds') else None,
+                ts.get('rebounds', {}).get('defensive') if ts.get('rebounds') else None,
+                ts.get('rebounds', {}).get('total') if ts.get('rebounds') else None,
+                ts.get('fouls', {}).get('total') if ts.get('fouls') else None,
+                ts.get('fouls', {}).get('technical') if ts.get('fouls') else None,
+                ts.get('fouls', {}).get('flagrant') if ts.get('fouls') else None,
+                ts.get('fourFactors', {}).get('effectiveFieldGoalPct') if ts.get('fourFactors') else None,
+                ts.get('fourFactors', {}).get('freeThrowRate') if ts.get('fourFactors') else None,
+                ts.get('fourFactors', {}).get('turnoverRatio') if ts.get('fourFactors') else None,
+                ts.get('fourFactors', {}).get('offensiveReboundPct') if ts.get('fourFactors') else None,
+                # Opponent stats (37)
                 os.get('possessions'), os.get('assists'), os.get('steals'), os.get('blocks'),
                 os.get('trueShooting'), os.get('rating'), os.get('gameScore'),
-                os.get('points', {}).get('total'),
-                self.json_serialize(os.get('points', {}).get('byPeriod')),
-                os.get('points', {}).get('largestLead'),
-                os.get('points', {}).get('fastBreak'),
-                os.get('points', {}).get('inPaint'),
-                os.get('points', {}).get('offTurnovers'),
-                os.get('twoPointFieldGoals', {}).get('made'),
-                os.get('twoPointFieldGoals', {}).get('attempted'),
-                os.get('twoPointFieldGoals', {}).get('pct'),
-                os.get('threePointFieldGoals', {}).get('made'),
-                os.get('threePointFieldGoals', {}).get('attempted'),
-                os.get('threePointFieldGoals', {}).get('pct'),
-                os.get('freeThrows', {}).get('made'),
-                os.get('freeThrows', {}).get('attempted'),
-                os.get('freeThrows', {}).get('pct'),
-                os.get('fieldGoals', {}).get('made'),
-                os.get('fieldGoals', {}).get('attempted'),
-                os.get('fieldGoals', {}).get('pct'),
-                os.get('turnovers', {}).get('total'),
-                os.get('turnovers', {}).get('teamTotal'),
-                os.get('rebounds', {}).get('offensive'),
-                os.get('rebounds', {}).get('defensive'),
-                os.get('rebounds', {}).get('total'),
-                os.get('fouls', {}).get('total'),
-                os.get('fouls', {}).get('technical'),
-                os.get('fouls', {}).get('flagrant'),
-                os.get('fourFactors', {}).get('effectiveFieldGoalPct'),
-                os.get('fourFactors', {}).get('freeThrowRate'),
-                os.get('fourFactors', {}).get('turnoverRatio'),
-                os.get('fourFactors', {}).get('offensiveReboundPct')
+                os.get('points', {}).get('total') if os.get('points') else None,
+                self.json_serialize(os.get('points', {}).get('byPeriod')) if os.get('points') else None,
+                os.get('points', {}).get('largestLead') if os.get('points') else None,
+                os.get('points', {}).get('fastBreak') if os.get('points') else None,
+                os.get('points', {}).get('inPaint') if os.get('points') else None,
+                os.get('points', {}).get('offTurnovers') if os.get('points') else None,
+                os.get('twoPointFieldGoals', {}).get('made') if os.get('twoPointFieldGoals') else None,
+                os.get('twoPointFieldGoals', {}).get('attempted') if os.get('twoPointFieldGoals') else None,
+                os.get('twoPointFieldGoals', {}).get('pct') if os.get('twoPointFieldGoals') else None,
+                os.get('threePointFieldGoals', {}).get('made') if os.get('threePointFieldGoals') else None,
+                os.get('threePointFieldGoals', {}).get('attempted') if os.get('threePointFieldGoals') else None,
+                os.get('threePointFieldGoals', {}).get('pct') if os.get('threePointFieldGoals') else None,
+                os.get('freeThrows', {}).get('made') if os.get('freeThrows') else None,
+                os.get('freeThrows', {}).get('attempted') if os.get('freeThrows') else None,
+                os.get('freeThrows', {}).get('pct') if os.get('freeThrows') else None,
+                os.get('fieldGoals', {}).get('made') if os.get('fieldGoals') else None,
+                os.get('fieldGoals', {}).get('attempted') if os.get('fieldGoals') else None,
+                os.get('fieldGoals', {}).get('pct') if os.get('fieldGoals') else None,
+                os.get('turnovers', {}).get('total') if os.get('turnovers') else None,
+                os.get('turnovers', {}).get('teamTotal') if os.get('turnovers') else None,
+                os.get('rebounds', {}).get('offensive') if os.get('rebounds') else None,
+                os.get('rebounds', {}).get('defensive') if os.get('rebounds') else None,
+                os.get('rebounds', {}).get('total') if os.get('rebounds') else None,
+                os.get('fouls', {}).get('total') if os.get('fouls') else None,
+                os.get('fouls', {}).get('technical') if os.get('fouls') else None,
+                os.get('fouls', {}).get('flagrant') if os.get('fouls') else None,
+                os.get('fourFactors', {}).get('effectiveFieldGoalPct') if os.get('fourFactors') else None,
+                os.get('fourFactors', {}).get('freeThrowRate') if os.get('fourFactors') else None,
+                os.get('fourFactors', {}).get('turnoverRatio') if os.get('fourFactors') else None,
+                os.get('fourFactors', {}).get('offensiveReboundPct') if os.get('fourFactors') else None
             )
             
             if self.execute_merge(cursor, sql, params, f"team game {tg.get('gameId')}-{tg.get('teamId')}"):

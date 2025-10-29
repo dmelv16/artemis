@@ -63,15 +63,15 @@ class MainETL:
         
         try:
             # Conferences
-            self.log("Running Conferences ETL...")
-            conferences_etl = ConferencesETL(self.api_key, self.db_connection)
-            conferences_etl.run_etl()
-            self.log("✓ Conferences complete\n")
+            # self.log("Running Conferences ETL...")
+            # conferences_etl = ConferencesETL(self.api_key, self.db_connection)
+            # conferences_etl.run_etl()
+            # self.log("✓ Conferences complete\n")
             
-            # Venues
-            self.log("Running Venues ETL...")
-            venues_etl = VenuesETL(self.api_key, self.db_connection)
-            venues_etl.run_etl()
+            # # Venues
+            # self.log("Running Venues ETL...")
+            # venues_etl = VenuesETL(self.api_key, self.db_connection)
+            # venues_etl.run_etl()
             self.log("✓ Venues complete\n")
             
         except Exception as e:
@@ -86,10 +86,10 @@ class MainETL:
         
         try:
             # Teams & Rosters
-            self.log("Running Teams & Rosters ETL...")
-            teams_etl = TeamsETL(self.api_key, self.db_connection)
-            teams_etl.run_etl(start_season, end_season)
-            self.log("✓ Teams & Rosters complete\n")
+            # self.log("Running Teams & Rosters ETL...")
+            # teams_etl = TeamsETL(self.api_key, self.db_connection)
+            # teams_etl.run_etl(start_season, end_season)
+            # self.log("✓ Teams & Rosters complete\n")
             
             # Games & Team Games
             self.log("Running Games & Team Games ETL...")
