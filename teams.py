@@ -49,7 +49,7 @@ class TeamsETL(BaseCollegeBasketballETL):
             firstName NVARCHAR(100),
             lastName NVARCHAR(100),
             jersey NVARCHAR(10),
-            position NVARCHAR(10),
+            position NVARCHAR(50),
             height INT,
             weight INT,
             
