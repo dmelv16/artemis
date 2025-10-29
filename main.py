@@ -3,21 +3,43 @@ Main ETL Orchestrator for College Basketball Data
 Runs all ETL processes in the correct order
 """
 
-import argparse
 from datetime import datetime
-from typing import List
 
 # Import all ETL classes
-from conferences_etl import ConferencesETL
-from venues_etl import VenuesETL
-from teams_etl import TeamsETL
-from games_etl import GamesETL
-from rankings_etl import RankingsETL
-from lines_etl import LinesETL
-from recruiting_etl import RecruitingETL
-from substitutions_etl import SubstitutionsETL
-from plays_etl import PlaysETL
-from lineups_etl import LineupsETL
+from conferences import ConferencesETL
+from venues import VenuesETL
+from teams import TeamsETL
+from games import GamesETL
+from rankings import RankingsETL
+from lines import LinesETL
+from recruiting import RecruitingETL
+from substitution import SubstitutionsETL
+from plays import PlaysETL
+from lineups import LineupsETL
+
+
+# ============================================================================
+# CONFIGURATION - EDIT THESE VALUES
+# ============================================================================
+API_KEY = "ffWPBYbZcxYH+eWEuwu3LVDuAdaRD/1tvzaIe2FkAQ5uj+V4UNvyaVyNW/O2Sx4B"
+DB_SERVER = "DESKTOP-J9IV3OH"
+DB_NAME = "cbbDB"
+DB_USER = None  # Set to None for Windows Authentication
+DB_PASSWORD = None  # Set to None for Windows Authentication
+
+START_SEASON = 2006
+END_SEASON = 2025
+INCLUDE_GAME_DETAILS = True  # Set to True to include substitutions, plays, lineups (very slow!)
+BATCH_SIZE = 100
+
+# Select which phases to run (comment out phases you don't want)
+PHASES_TO_RUN = [
+    'reference',      # Conferences & Venues
+    'season',         # Teams, Games, Rankings, Lines
+    'recruiting',     # Recruiting data
+    'game-details', # Substitutions, Plays, Lineups (VERY SLOW - uncomment to enable)
+]
+# ============================================================================
 
 
 class MainETL:
@@ -138,33 +160,30 @@ class MainETL:
             self.log(f"✗ Error in game detail data: {e}")
             raise
     
-    def run_full_etl(self, start_season: int = 2006, end_season: int = 2025,
-                     include_game_details: bool = False, batch_size: int = 100):
-        """Run complete ETL pipeline"""
+    def run_etl_pipeline(self, phases: list, start_season: int, end_season: int,
+                        batch_size: int = 100):
+        """Run ETL pipeline with specified phases"""
         self.start_time = datetime.now()
         self.log("\n" + "="*80)
-        self.log("STARTING FULL ETL PIPELINE")
+        self.log("STARTING ETL PIPELINE")
         self.log("="*80 + "\n")
         
         try:
             # Phase 1: Reference Data
-            self.run_reference_data()
+            if 'reference' in phases:
+                self.run_reference_data()
             
             # Phase 2: Season Data
-            self.run_season_data(start_season, end_season)
+            if 'season' in phases:
+                self.run_season_data(start_season, end_season)
             
             # Phase 3: Recruiting
-            self.run_recruiting_data(start_season, end_season)
+            if 'recruiting' in phases:
+                self.run_recruiting_data(start_season, end_season)
             
-            # Phase 4: Game Details (optional - very time intensive)
-            if include_game_details:
+            # Phase 4: Game Details
+            if 'game-details' in phases:
                 self.run_game_detail_data(start_season, end_season, batch_size)
-            else:
-                self.log("="*80)
-                self.log("PHASE 4: Game Detail Data - SKIPPED")
-                self.log("="*80)
-                self.log("To include substitutions, plays, and lineups, use --include-game-details")
-                self.log("Note: This will significantly increase runtime\n")
             
             # Complete
             elapsed = datetime.now() - self.start_time
@@ -184,94 +203,34 @@ class MainETL:
 
 
 def main():
-    """Main entry point with command line arguments"""
-    parser = argparse.ArgumentParser(
-        description='College Basketball Data ETL Pipeline',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run full pipeline for 2020-2025 seasons
-  python main_etl.py --start-season 2020 --end-season 2025
-
-  # Run only reference data
-  python main_etl.py --phases reference
-
-  # Run with game details (slow!)
-  python main_etl.py --start-season 2024 --end-season 2025 --include-game-details
-
-  # Run specific phases
-  python main_etl.py --phases reference season recruiting
-        """
-    )
-    
-    # API & Database config
-    parser.add_argument('--api-key', type=str, required=True,
-                        help='API key for collegebasketballdata.com')
-    parser.add_argument('--db-server', type=str, required=True,
-                        help='SQL Server name')
-    parser.add_argument('--db-name', type=str, required=True,
-                        help='Database name')
-    parser.add_argument('--db-user', type=str,
-                        help='Database username (optional for Windows auth)')
-    parser.add_argument('--db-password', type=str,
-                        help='Database password (optional for Windows auth)')
-    
-    # Season ranges
-    parser.add_argument('--start-season', type=int, default=2006,
-                        help='Starting season year (default: 2006)')
-    parser.add_argument('--end-season', type=int, default=2025,
-                        help='Ending season year (default: 2025)')
-    
-    # Options
-    parser.add_argument('--include-game-details', action='store_true',
-                        help='Include game-level details (substitutions, plays, lineups) - very slow!')
-    parser.add_argument('--batch-size', type=int, default=100,
-                        help='Batch size for game detail processing (default: 100)')
-    parser.add_argument('--phases', nargs='+', 
-                        choices=['reference', 'season', 'recruiting', 'game-details'],
-                        help='Run specific phases only')
-    
-    args = parser.parse_args()
+    """Main entry point"""
     
     # Build connection string
-    if args.db_user and args.db_password:
+    if DB_USER and DB_PASSWORD:
         db_connection = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={args.db_server};"
-            f"DATABASE={args.db_name};"
-            f"UID={args.db_user};"
-            f"PWD={args.db_password}"
+            f"SERVER={DB_SERVER};"
+            f"DATABASE={DB_NAME};"
+            f"UID={DB_USER};"
+            f"PWD={DB_PASSWORD}"
         )
     else:
         # Windows Authentication
         db_connection = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={args.db_server};"
-            f"DATABASE={args.db_name};"
+            f"SERVER={DB_SERVER};"
+            f"DATABASE={DB_NAME};"
             f"Trusted_Connection=yes;"
         )
     
-    # Initialize main ETL
-    main_etl = MainETL(args.api_key, db_connection)
-    
-    # Run specified phases or full pipeline
-    if args.phases:
-        if 'reference' in args.phases:
-            main_etl.run_reference_data()
-        if 'season' in args.phases:
-            main_etl.run_season_data(args.start_season, args.end_season)
-        if 'recruiting' in args.phases:
-            main_etl.run_recruiting_data(args.start_season, args.end_season)
-        if 'game-details' in args.phases:
-            main_etl.run_game_detail_data(args.start_season, args.end_season, args.batch_size)
-    else:
-        # Run full pipeline
-        main_etl.run_full_etl(
-            start_season=args.start_season,
-            end_season=args.end_season,
-            include_game_details=args.include_game_details,
-            batch_size=args.batch_size
-        )
+    # Initialize and run ETL
+    main_etl = MainETL(API_KEY, db_connection)
+    main_etl.run_etl_pipeline(
+        phases=PHASES_TO_RUN,
+        start_season=START_SEASON,
+        end_season=END_SEASON,
+        batch_size=BATCH_SIZE
+    )
 
 
 if __name__ == "__main__":
