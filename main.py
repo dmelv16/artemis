@@ -16,7 +16,7 @@ from recruiting import RecruitingETL
 from substitution import SubstitutionsETL
 from plays import PlaysETL
 from lineups import LineupsETL
-
+from players import PlayerGamesETL
 
 # ============================================================================
 # CONFIGURATION - EDIT THESE VALUES
@@ -155,7 +155,7 @@ class MainETL:
             # lineups_etl = LineupsETL(self.api_key, self.db_connection)
             # lineups_etl.run_etl(2019, end_season, batch_size)
             # self.log("✓ Lineups complete\n")
-            
+
             # Player Games
             self.log("Running Player Games ETL...")
             player_games_etl = PlayerGamesETL(self.api_key, self.db_connection)
