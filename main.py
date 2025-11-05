@@ -139,22 +139,28 @@ class MainETL:
         
         try:
             # Substitutions
-            self.log("Running Substitutions ETL...")
-            substitutions_etl = SubstitutionsETL(self.api_key, self.db_connection)
-            substitutions_etl.run_etl(start_season, end_season, batch_size)
-            self.log("✓ Substitutions complete\n")
+            # self.log("Running Substitutions ETL...")
+            # substitutions_etl = SubstitutionsETL(self.api_key, self.db_connection)
+            # substitutions_etl.run_etl(start_season, end_season, batch_size)
+            # self.log("✓ Substitutions complete\n")
             
             # Play-by-Play
-            self.log("Running Play-by-Play ETL...")
-            plays_etl = PlaysETL(self.api_key, self.db_connection)
-            plays_etl.run_etl(start_season, end_season, batch_size)
-            self.log("✓ Play-by-Play complete\n")
+            # self.log("Running Play-by-Play ETL...")
+            # plays_etl = PlaysETL(self.api_key, self.db_connection)
+            # plays_etl.run_etl(2021, end_season, batch_size)
+            # self.log("✓ Play-by-Play complete\n")
             
             # Lineups
-            self.log("Running Lineups ETL...")
-            lineups_etl = LineupsETL(self.api_key, self.db_connection)
-            lineups_etl.run_etl(start_season, end_season, batch_size)
-            self.log("✓ Lineups complete\n")
+            # self.log("Running Lineups ETL...")
+            # lineups_etl = LineupsETL(self.api_key, self.db_connection)
+            # lineups_etl.run_etl(2019, end_season, batch_size)
+            # self.log("✓ Lineups complete\n")
+            
+            # Player Games
+            self.log("Running Player Games ETL...")
+            player_games_etl = PlayerGamesETL(self.api_key, self.db_connection)
+            player_games_etl.run_etl(start_season, end_season)
+            self.log("✓ Player Games complete\n")
             
         except Exception as e:
             self.log(f"✗ Error in game detail data: {e}")
@@ -169,17 +175,17 @@ class MainETL:
         self.log("="*80 + "\n")
         
         try:
-            # Phase 1: Reference Data
-            if 'reference' in phases:
-                self.run_reference_data()
+            # # Phase 1: Reference Data
+            # if 'reference' in phases:
+            #     self.run_reference_data()
             
-            # Phase 2: Season Data
-            if 'season' in phases:
-                self.run_season_data(start_season, end_season)
+            # # Phase 2: Season Data
+            # if 'season' in phases:
+            #     self.run_season_data(start_season, end_season)
             
-            # Phase 3: Recruiting
-            if 'recruiting' in phases:
-                self.run_recruiting_data(start_season, end_season)
+            # # Phase 3: Recruiting
+            # if 'recruiting' in phases:
+            #     self.run_recruiting_data(start_season, end_season)
             
             # Phase 4: Game Details
             if 'game-details' in phases:

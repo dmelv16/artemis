@@ -193,8 +193,25 @@ class PlaysETL(BaseCollegeBasketballETL):
         inserted = self.insert_plays(plays, cursor)
         return inserted
     
+    def get_games_with_plays(self, cursor, season: int = None) -> set:
+        """Get set of game IDs that already have plays in the database"""
+        if season:
+            cursor.execute(
+                "SELECT DISTINCT gameId FROM plays WHERE season = ?", 
+                (season,)
+            )
+        else:
+            cursor.execute("SELECT DISTINCT gameId FROM plays")
+        return {row[0] for row in cursor.fetchall()}
+
+    def get_play_count_for_game(self, cursor, game_id: int) -> int:
+        """Get count of plays for a specific game"""
+        cursor.execute("SELECT COUNT(*) FROM plays WHERE gameId = ?", (game_id,))
+        return cursor.fetchone()[0]
+
     def run_etl(self, start_season: int = 2006, end_season: int = 2025, 
-                batch_size: int = 50):
+                batch_size: int = 50, skip_existing: bool = True,
+                min_plays_threshold: int = 10):
         """
         Run the complete ETL process for play-by-play data
         
@@ -202,6 +219,9 @@ class PlaysETL(BaseCollegeBasketballETL):
             start_season: Starting season year
             end_season: Ending season year
             batch_size: Number of games to process before committing
+            skip_existing: Skip games that already have plays
+            min_plays_threshold: Minimum number of plays to consider a game "complete"
+                            (some games might have been partially loaded)
         """
         # First, get all game IDs from the database
         fetcher = GameIDFetcher(self.conn_string)
@@ -216,6 +236,7 @@ class PlaysETL(BaseCollegeBasketballETL):
             conn.commit()
             
             total_inserted = 0
+            total_skipped = 0
             
             # Process each season
             for season in range(start_season, end_season + 1):
@@ -223,6 +244,29 @@ class PlaysETL(BaseCollegeBasketballETL):
                 
                 if not game_ids:
                     print(f"No games found for season {season}")
+                    continue
+                
+                # Get games that already have plays for this season
+                if skip_existing:
+                    existing_games = self.get_games_with_plays(cursor, season)
+                    print(f"Found {len(existing_games)} games with existing plays for season {season}")
+                    
+                    # Filter out games that already have sufficient plays
+                    games_to_process = []
+                    for game_id in game_ids:
+                        if game_id in existing_games:
+                            play_count = self.get_play_count_for_game(cursor, game_id)
+                            if play_count >= min_plays_threshold:
+                                total_skipped += 1
+                                continue
+                            else:
+                                print(f"  Game {game_id} has only {play_count} plays, will reprocess")
+                        games_to_process.append(game_id)
+                    
+                    game_ids = games_to_process
+                
+                if not game_ids:
+                    print(f"No new games to process for season {season}")
                     continue
                 
                 print(f"\n{'='*60}")
@@ -258,6 +302,7 @@ class PlaysETL(BaseCollegeBasketballETL):
             print(f"=== ETL Complete ===")
             print(f"{'='*60}")
             print(f"Total plays inserted: {total_inserted}")
+            print(f"Total games skipped: {total_skipped}")
             
         except Exception as e:
             print(f"ETL process error: {e}")

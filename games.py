@@ -5,6 +5,16 @@ from datetime import datetime, timedelta
 
 class GamesETL(BaseCollegeBasketballETL):
     """ETL for college basketball games and team games data"""
+
+    def get_existing_game_ids(self, cursor, season: int) -> set:
+        """Get set of game IDs that already exist in database for a season"""
+        cursor.execute("SELECT id FROM games WHERE season = ?", (season,))
+        return {row[0] for row in cursor.fetchall()}
+
+    def get_existing_team_game_keys(self, cursor, season: int) -> set:
+        """Get set of (gameId, teamId) tuples that already exist for a season"""
+        cursor.execute("SELECT gameId, teamId FROM team_games WHERE season = ?", (season,))
+        return {(row[0], row[1]) for row in cursor.fetchall()}
     
     def create_tables(self, cursor):
         """Create the games and team_games tables if they don't exist"""
@@ -407,7 +417,8 @@ class GamesETL(BaseCollegeBasketballETL):
         return inserted
     
     def run_etl(self, start_season: int = 2006, end_season: int = 2025,
-                fetch_games: bool = True, fetch_team_games: bool = True):
+            fetch_games: bool = True, fetch_team_games: bool = True,
+            skip_existing: bool = True):  # Add this parameter
         """Run ETL for games and team games"""
         try:
             conn = self.get_db_connection()
@@ -423,20 +434,51 @@ class GamesETL(BaseCollegeBasketballETL):
                 print(f"\n{'='*60}\nSeason {season}\n{'='*60}")
                 
                 if fetch_games:
+                    # Get existing games if skip_existing is True
+                    if skip_existing:
+                        existing_ids = self.get_existing_game_ids(cursor, season)
+                        print(f"Found {len(existing_ids)} existing games for season {season}")
+                    else:
+                        existing_ids = set()
+                    
                     games = self.fetch_games_for_season(season, "games")
                     if games:
-                        inserted = self.insert_games(games, cursor)
-                        conn.commit()
-                        total_games += inserted
-                        print(f"✓ {inserted} games inserted")
+                        # Filter out existing games
+                        if skip_existing:
+                            games = [g for g in games if g.get('id') not in existing_ids]
+                            print(f"Processing {len(games)} new games")
+                        
+                        if games:  # Only insert if there are new games
+                            inserted = self.insert_games(games, cursor)
+                            conn.commit()
+                            total_games += inserted
+                            print(f"✓ {inserted} games inserted")
+                        else:
+                            print("No new games to insert")
                 
                 if fetch_team_games:
+                    # Get existing team games if skip_existing is True
+                    if skip_existing:
+                        existing_keys = self.get_existing_team_game_keys(cursor, season)
+                        print(f"Found {len(existing_keys)} existing team games for season {season}")
+                    else:
+                        existing_keys = set()
+                    
                     team_games = self.fetch_games_for_season(season, "team_games")
                     if team_games:
-                        inserted = self.insert_team_games(team_games, cursor)
-                        conn.commit()
-                        total_team_games += inserted
-                        print(f"✓ {inserted} team games inserted")
+                        # Filter out existing team games
+                        if skip_existing:
+                            team_games = [tg for tg in team_games 
+                                        if (tg.get('gameId'), tg.get('teamId')) not in existing_keys]
+                            print(f"Processing {len(team_games)} new team games")
+                        
+                        if team_games:  # Only insert if there are new team games
+                            inserted = self.insert_team_games(team_games, cursor)
+                            conn.commit()
+                            total_team_games += inserted
+                            print(f"✓ {inserted} team games inserted")
+                        else:
+                            print("No new team games to insert")
                 
                 self.rate_limit_sleep(2)
             
