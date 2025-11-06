@@ -6,17 +6,17 @@ Runs all ETL processes in the correct order
 from datetime import datetime
 
 # Import all ETL classes
-from conferences import ConferencesETL
-from venues import VenuesETL
-from teams import TeamsETL
-from games import GamesETL
-from rankings import RankingsETL
-from lines import LinesETL
-from recruiting import RecruitingETL
-from substitution import SubstitutionsETL
-from plays import PlaysETL
-from lineups import LineupsETL
-from players import PlayerGamesETL
+from etl.conferences import ConferencesETL
+from etl.venues import VenuesETL
+from etl.teams import TeamsETL
+from etl.games import GamesETL
+from etl.rankings import RankingsETL
+from etl.lines import LinesETL
+from etl.recruiting import RecruitingETL
+from etl.substitution import SubstitutionsETL
+from etl.plays import PlaysETL
+from etl.lineups import LineupsETL
+from etl.players import PlayerGamesETL
 
 # ============================================================================
 # CONFIGURATION - EDIT THESE VALUES
@@ -92,23 +92,29 @@ class MainETL:
             # self.log("✓ Teams & Rosters complete\n")
             
             # Games & Team Games
-            self.log("Running Games & Team Games ETL...")
-            games_etl = GamesETL(self.api_key, self.db_connection)
-            games_etl.run_etl(start_season, end_season)
-            self.log("✓ Games & Team Games complete\n")
+            # self.log("Running Games & Team Games ETL...")
+            # games_etl = GamesETL(self.api_key, self.db_connection)
+            # games_etl.run_etl(start_season, end_season)
+            # self.log("✓ Games & Team Games complete\n")
             
-            # Rankings
-            self.log("Running Rankings ETL...")
-            rankings_etl = RankingsETL(self.api_key, self.db_connection)
-            rankings_etl.run_etl(start_season, end_season)
-            self.log("✓ Rankings complete\n")
+            # # Rankings
+            # self.log("Running Rankings ETL...")
+            # rankings_etl = RankingsETL(self.api_key, self.db_connection)
+            # rankings_etl.run_etl(start_season, end_season)
+            # self.log("✓ Rankings complete\n")
             
-            # Betting Lines
-            self.log("Running Betting Lines ETL...")
-            lines_etl = LinesETL(self.api_key, self.db_connection)
-            lines_etl.run_etl(start_season, end_season)
-            self.log("✓ Betting Lines complete\n")
-            
+            # # Betting Lines
+            # self.log("Running Betting Lines ETL...")
+            # lines_etl = LinesETL(self.api_key, self.db_connection)
+            # lines_etl.run_etl(start_season, end_season)
+            # self.log("✓ Betting Lines complete\n")
+
+            # Player Games
+            self.log("Running Player Games ETL...")
+            player_games_etl = PlayerGamesETL(self.api_key, self.db_connection)
+            player_games_etl.run_etl(start_season, end_season)
+            self.log("✓ Player Games complete\n")
+
         except Exception as e:
             self.log(f"✗ Error in season data: {e}")
             raise
@@ -137,7 +143,7 @@ class MainETL:
         self.log("="*80)
         self.log("WARNING: This phase is time-intensive (requires fetching each game individually)")
         
-        try:
+        # try:
             # Substitutions
             # self.log("Running Substitutions ETL...")
             # substitutions_etl = SubstitutionsETL(self.api_key, self.db_connection)
@@ -155,16 +161,10 @@ class MainETL:
             # lineups_etl = LineupsETL(self.api_key, self.db_connection)
             # lineups_etl.run_etl(2019, end_season, batch_size)
             # self.log("✓ Lineups complete\n")
-
-            # Player Games
-            self.log("Running Player Games ETL...")
-            player_games_etl = PlayerGamesETL(self.api_key, self.db_connection)
-            player_games_etl.run_etl(start_season, end_season)
-            self.log("✓ Player Games complete\n")
             
-        except Exception as e:
-            self.log(f"✗ Error in game detail data: {e}")
-            raise
+        # except Exception as e:
+        #     self.log(f"✗ Error in game detail data: {e}")
+        #     raise
     
     def run_etl_pipeline(self, phases: list, start_season: int, end_season: int,
                         batch_size: int = 100):
@@ -179,17 +179,17 @@ class MainETL:
             # if 'reference' in phases:
             #     self.run_reference_data()
             
-            # # Phase 2: Season Data
-            # if 'season' in phases:
-            #     self.run_season_data(start_season, end_season)
+            # Phase 2: Season Data
+            if 'season' in phases:
+                self.run_season_data(start_season, end_season)
             
             # # Phase 3: Recruiting
             # if 'recruiting' in phases:
             #     self.run_recruiting_data(start_season, end_season)
             
             # Phase 4: Game Details
-            if 'game-details' in phases:
-                self.run_game_detail_data(start_season, end_season, batch_size)
+            # if 'game-details' in phases:
+            #     self.run_game_detail_data(start_season, end_season, batch_size)
             
             # Complete
             elapsed = datetime.now() - self.start_time

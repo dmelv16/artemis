@@ -1,4 +1,4 @@
-from base_etl import BaseCollegeBasketballETL
+from etl.base_etl import BaseCollegeBasketballETL
 from typing import List, Dict
 from datetime import datetime, timedelta
 
@@ -164,27 +164,27 @@ class PlayerGamesETL(BaseCollegeBasketballETL):
             Number of records inserted
         """
         insert_sql = """
-        MERGE player_games AS target
-        USING (SELECT ? AS gameId, ? AS athleteId) AS source
-        ON target.gameId = source.gameId AND target.athleteId = source.athleteId
-        WHEN NOT MATCHED THEN
-            INSERT (gameId, season, seasonLabel, seasonType, tournament, startDate, startTimeTbd,
-                    conferenceGame, neutralSite, isHome, gameType, notes,
-                    teamId, team, conference, teamSeed, opponentId, opponent, opponentConference, opponentSeed,
-                    gameMinutes, gamePace,
-                    athleteId, athleteSourceId, name, position, starter, ejected,
-                    minutes, points, turnovers, fouls, assists, steals, blocks,
-                    gameScore, offensiveRating, defensiveRating, netRating, usage,
-                    effectiveFieldGoalPct, trueShootingPct, assistsTurnoverRatio, freeThrowRate, offensiveReboundPct,
-                    fieldGoalsMade, fieldGoalsAttempted, fieldGoalsPct,
-                    twoPointFGMade, twoPointFGAttempted, twoPointFGPct,
-                    threePointFGMade, threePointFGAttempted, threePointFGPct,
-                    freeThrowsMade, freeThrowsAttempted, freeThrowsPct,
-                    offensiveRebounds, defensiveRebounds, totalRebounds)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """
+                MERGE player_games AS target
+                USING (SELECT ? AS gameId, ? AS athleteId) AS source
+                ON target.gameId = source.gameId AND target.athleteId = source.athleteId
+                WHEN NOT MATCHED THEN
+                    INSERT (gameId, season, seasonLabel, seasonType, tournament, startDate, startTimeTbd,
+                            conferenceGame, neutralSite, isHome, gameType, notes,
+                            teamId, team, conference, teamSeed, opponentId, opponent, opponentConference, opponentSeed,
+                            gameMinutes, gamePace,
+                            athleteId, athleteSourceId, name, position, starter, ejected,
+                            minutes, points, turnovers, fouls, assists, steals, blocks,
+                            gameScore, offensiveRating, defensiveRating, netRating, usage,
+                            effectiveFieldGoalPct, trueShootingPct, assistsTurnoverRatio, freeThrowRate, offensiveReboundPct,
+                            fieldGoalsMade, fieldGoalsAttempted, fieldGoalsPct,
+                            twoPointFGMade, twoPointFGAttempted, twoPointFGPct,
+                            threePointFGMade, threePointFGAttempted, threePointFGPct,
+                            freeThrowsMade, freeThrowsAttempted, freeThrowsPct,
+                            offensiveRebounds, defensiveRebounds, totalRebounds)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """
         
         inserted = 0
         for game_data in player_games_data:

@@ -1,4 +1,4 @@
-from base_etl import BaseCollegeBasketballETL
+from etl.base_etl import BaseCollegeBasketballETL
 from typing import List, Dict
 
 
