@@ -55,8 +55,7 @@ def main():
     
     # Step 7: Feature engineering
     feature_eng = FeatureEngineer(db_conn)
-    df = feature_eng.create_differentials(df)
-    df = feature_eng.add_temporal_features(df)
+    df = feature_eng.engineer_all_features(df)
     
     # Save results
     df = save_master_table(

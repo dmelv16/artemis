@@ -31,7 +31,7 @@ def print_summary(df):
         'Rolling Stats': [c for c in df.columns if '_L5' in c or '_L10' in c or '_std' in c],
         'Roster/Recruiting': [c for c in df.columns if any(x in c for x in ['roster', 'recruit'])],
         'Head-to-Head': [c for c in df.columns if 'h2h' in c],
-        'Rankings': [c for c in df.columns if 'rank' in c or 'AP' in c or 'Coaches' in c],
+        'Rankings': [c for c in df.columns if 'rank' in c or 'AP Top 25' in c or 'Coaches Poll' in c],
         'Differentials': [c for c in df.columns if c.startswith('diff_')],
         'Temporal': [c for c in df.columns if any(x in c for x in ['day', 'week', 'month', 'rest'])]
     }
