@@ -50,7 +50,7 @@ class PlayerStatsCalculator:
         query = f"""
         SELECT 
             pg.*,
-            g.startDate,
+            g.startDate as gameStartDate,
             g.homeTeamId,
             g.awayTeamId,
             CASE 
@@ -62,7 +62,21 @@ class PlayerStatsCalculator:
         WHERE g.status = 'Final' AND g.startDate >= '{min_date}'
         ORDER BY g.startDate, pg.teamId, pg.minutes DESC
         """
-        return self.db.query(query)
+        
+        player_games = self.db.query(query)
+        
+        # CRITICAL FIX: Remove duplicate columns and handle startDate properly
+        player_games = player_games.loc[:, ~player_games.columns.duplicated()]
+        
+        # Ensure we have a single startDate column
+        if 'gameStartDate' in player_games.columns:
+            player_games['startDate'] = player_games['gameStartDate']
+            player_games = player_games.drop(columns=['gameStartDate'])
+        
+        # Ensure startDate is datetime type and not multi-dimensional
+        player_games['startDate'] = pd.to_datetime(player_games['startDate'])
+        
+        return player_games
     
     def _calculate_team_totals(self, player_games):
         """Pre-calculate team totals to avoid N+1 queries."""
@@ -500,6 +514,17 @@ class PlayerStatsCalculator:
         # Only sort features (df is already sorted from calculate())
         features_sorted = features.sort_values('startDate').copy()
         
+        # CRITICAL FIX: Ensure consistent dtypes for merge keys
+        # Convert both to standard int64 (not nullable Int64)
+        if team_id_col in df.columns:
+            df[team_id_col] = df[team_id_col].astype('int64')
+        if 'teamId' in features_sorted.columns:
+            features_sorted['teamId'] = features_sorted['teamId'].astype('int64')
+        
+        # Ensure startDate is datetime64 in both
+        df['startDate'] = pd.to_datetime(df['startDate'])
+        features_sorted['startDate'] = pd.to_datetime(features_sorted['startDate'])
+        
         # Save original index to restore order
         original_index = df.index
         
@@ -515,10 +540,20 @@ class PlayerStatsCalculator:
             suffixes=('', f'_{team_type}_temp')
         )
         
-        # Rename columns to include team prefix
+        # Rename columns to include team prefix (but NOT teamId)
         feature_cols = [c for c in features.columns if c not in ['teamId', 'startDate']]
         rename_dict = {col: f'{team_type}_{col}' for col in feature_cols}
         merged = merged.rename(columns=rename_dict)
+        
+        # DROP the temporary teamId column that was created by the merge
+        temp_teamid_col = f'teamId_{team_type}_temp'
+        if temp_teamid_col in merged.columns:
+            merged = merged.drop(columns=[temp_teamid_col])
+        
+        # Also drop any other _temp columns
+        temp_cols = [col for col in merged.columns if col.endswith(f'_{team_type}_temp')]
+        if temp_cols:
+            merged = merged.drop(columns=temp_cols)
         
         # Restore original order using saved index
         merged = merged.set_index(original_index).sort_index()

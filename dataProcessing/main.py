@@ -13,6 +13,7 @@ from head_to_head import HeadToHeadProcessor
 from rankings import RankingsProcessor
 from feature_engineering import FeatureEngineer
 from utils import save_master_table, print_summary
+from add_week_column import add_week_column
 
 def main():
     print("\n" + "="*60)
@@ -48,7 +49,10 @@ def main():
     # Step 5: Add head-to-head
     h2h_processor = HeadToHeadProcessor(db_conn)
     df = h2h_processor.add_features(df)
-    
+
+    # Step 5.5: Add week column
+    df = add_week_column(df)
+
     # Step 6: Add rankings
     rankings_processor = RankingsProcessor(db_conn)
     df = rankings_processor.add_features(df)

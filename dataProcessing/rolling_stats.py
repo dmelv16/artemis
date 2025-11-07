@@ -37,12 +37,15 @@ class RollingStatsCalculator:
         """
         print("  Querying all historical team games...")
         team_games = self.db.query("""
-            SELECT tg.*, g.startDate
+            SELECT tg.*
             FROM team_games tg
             JOIN games g ON tg.gameId = g.id
             WHERE g.status = 'Final'
             ORDER BY g.startDate
         """)
+        
+        # FIX 1: Remove duplicate columns (keep first occurrence)
+        team_games = team_games.loc[:, ~team_games.columns.duplicated()]
         
         # Validate columns
         missing_cols = [col for col in self.stat_columns if col not in team_games.columns]
@@ -58,11 +61,14 @@ class RollingStatsCalculator:
         # Sort by team, then date. This is crucial for groupby operations.
         team_games.sort_values(by=['teamId', 'startDate'], inplace=True)
         
+        # CRITICAL FIX: Reset index before grouping to avoid MultiIndex issues
+        team_games = team_games.reset_index(drop=True)
+        
         # Group by team
         grouped = team_games.groupby('teamId')
         
-        # Use a list to store new series, then concat at the end
-        all_new_cols = []
+        # Use a dictionary to store new columns for easier management
+        new_cols_dict = {}
 
         for window in windows:
             for stat in self.stat_columns:
@@ -75,16 +81,28 @@ class RollingStatsCalculator:
                     # Fixed window rolling average, shifted
                     stat_series = grouped[stat].rolling(window=window, min_periods=1).mean().shift(1)
                 
-                stat_series.name = col_name
-                all_new_cols.append(stat_series)
+                # CRITICAL FIX: Reset the index to flatten the MultiIndex
+                stat_series = stat_series.reset_index(level=0, drop=True)
+                new_cols_dict[col_name] = stat_series
 
-        # Combine the new stat columns with the original team_games df
-        rolling_stats_df = pd.concat([team_games] + all_new_cols, axis=1)
+        # Create a DataFrame from the dictionary
+        new_stats_df = pd.DataFrame(new_cols_dict, index=team_games.index)
         
-        # We only need the stats, teamId, and startDate for merging
-        lookup_cols = ['teamId', 'startDate'] + [col.name for col in all_new_cols]
+        # Combine with the original columns we need
+        rolling_stats_df = pd.concat([
+            team_games[['teamId', 'startDate']], 
+            new_stats_df
+        ], axis=1)
         
-        return rolling_stats_df[lookup_cols].sort_values(by='startDate')
+        # CRITICAL FIX: Ensure teamId has no nulls and proper dtype
+        rolling_stats_df['teamId'] = rolling_stats_df['teamId'].astype('Int64')
+        
+        # Verify no nulls in teamId
+        if rolling_stats_df['teamId'].isna().any():
+            print(f"    ERROR: Found {rolling_stats_df['teamId'].isna().sum()} null teamIds after calculation!")
+            rolling_stats_df = rolling_stats_df.dropna(subset=['teamId'])
+        
+        return rolling_stats_df.sort_values(by='startDate').reset_index(drop=True)
     
     def _merge_stats_vectorized(self, df, all_stats_df, windows):
         """
@@ -92,11 +110,38 @@ class RollingStatsCalculator:
         """
         print("  Merging statistics to main dataframe (vectorized)...")
         
+        # FIX 2: Ensure consistent data types for merge keys
+        # Convert team IDs to int64 in both dataframes
+        if 'homeTeamId' in df.columns:
+            df['homeTeamId'] = df['homeTeamId'].astype('Int64')
+        if 'awayTeamId' in df.columns:
+            df['awayTeamId'] = df['awayTeamId'].astype('Int64')
+        if 'teamId' in all_stats_df.columns:
+            all_stats_df['teamId'] = all_stats_df['teamId'].astype('Int64')
+        
+        # FIX 3: Remove rows with null team IDs from all_stats_df
+        # merge_asof cannot handle null values in the 'by' column
+        initial_count = len(all_stats_df)
+        all_stats_df = all_stats_df.dropna(subset=['teamId'])
+        if len(all_stats_df) < initial_count:
+            print(f"    Removed {initial_count - len(all_stats_df)} rows with null teamId from stats")
+        
         # We need to save the original index to restore order at the end
         df = df.reset_index(drop=False)
         original_index_name = 'index' if 'index' not in df.columns else 'original_index'
         if 'index' in df.columns and original_index_name == 'original_index':
             df = df.rename(columns={'index': original_index_name})
+        
+        # FIX 4: Track rows with null team IDs to handle them separately
+        null_home_mask = df['homeTeamId'].isna()
+        null_away_mask = df['awayTeamId'].isna()
+        has_nulls = null_home_mask.any() or null_away_mask.any()
+        
+        if has_nulls:
+            print(f"    Warning: Found {null_home_mask.sum()} rows with null homeTeamId and {null_away_mask.sum()} with null awayTeamId")
+            # Temporarily fill nulls with a placeholder for merging, we'll handle these separately
+            df['homeTeamId'] = df['homeTeamId'].fillna(-999)
+            df['awayTeamId'] = df['awayTeamId'].fillna(-999)
         
         # Both DFs must be sorted by the 'on' key (startDate) for merge_asof
         df_sorted = df.sort_values('startDate')
@@ -144,5 +189,12 @@ class RollingStatsCalculator:
         index_col = original_index_name if original_index_name in df_final.columns else 'index'
         if index_col in df_final.columns:
             df_final = df_final.set_index(index_col).sort_index()
+        
+        # FIX 5: Restore null team IDs if they existed
+        if has_nulls:
+            if 'homeTeamId' in df_final.columns:
+                df_final.loc[null_home_mask, 'homeTeamId'] = None
+            if 'awayTeamId' in df_final.columns:
+                df_final.loc[null_away_mask, 'awayTeamId'] = None
         
         return df_final

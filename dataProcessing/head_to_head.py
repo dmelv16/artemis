@@ -19,7 +19,7 @@ class HeadToHeadProcessor:
         
         # Fetch ALL historical games at once (single query)
         history_query = """
-        SELECT g.gameId, g.homePoints, g.awayPoints, 
+        SELECT g.id, g.homePoints, g.awayPoints, 
                g.homeTeamId, g.awayTeamId, g.startDate
         FROM games g
         WHERE g.status = 'Final'
