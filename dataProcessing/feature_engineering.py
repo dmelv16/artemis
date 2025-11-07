@@ -13,32 +13,45 @@ class FeatureEngineer:
         
         stat_cols = [col for col in df.columns if col.startswith('home_') and 
                     any(stat in col for stat in ['pace', 'rating', 'Pct', 'Ratio', 'Rate', 
-                                                  'assists', 'steals', 'blocks', 'points'])]
+                                                'assists', 'steals', 'blocks', 'points'])]
         
+        # Create all differential columns at once
+        diff_dict = {}
         for home_col in stat_cols:
             away_col = home_col.replace('home_', 'away_')
             if away_col in df.columns:
                 diff_col = home_col.replace('home_', 'diff_')
-                df[diff_col] = df[home_col] - df[away_col]
+                diff_dict[diff_col] = df[home_col] - df[away_col]
         
-        print(f"Created {len([c for c in df.columns if c.startswith('diff_')])} differential features")
+        # Concatenate all new columns at once
+        if diff_dict:
+            diff_df = pd.DataFrame(diff_dict, index=df.index)
+            df = pd.concat([df, diff_df], axis=1)
+        
+        print(f"Created {len(diff_dict)} differential features")
         return df
-    
+
     def add_temporal_features(self, df):
         print("Adding temporal features...")
         
         df['startDate'] = pd.to_datetime(df['startDate'])
         
-        # Basic temporal features
-        df['day_of_week'] = df['startDate'].dt.dayofweek
-        df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-        df['month'] = df['startDate'].dt.month
+        # Calculate all temporal features at once
+        temporal_dict = {
+            'day_of_week': df['startDate'].dt.dayofweek,
+            'is_weekend': df['startDate'].dt.dayofweek.isin([5, 6]).astype(int),
+            'month': df['startDate'].dt.month
+        }
         
         # Days since season start
         season_starts = df.groupby('season')['startDate'].min()
-        df['days_since_season_start'] = df.apply(
+        temporal_dict['days_since_season_start'] = df.apply(
             lambda x: (x['startDate'] - season_starts[x['season']]).days, axis=1
         )
+        
+        # Create DataFrame and concat once
+        temporal_df = pd.DataFrame(temporal_dict, index=df.index)
+        df = pd.concat([df, temporal_df], axis=1)
         
         # Calculate rest days (optimized)
         df = self._calculate_rest_days_optimized(df)
@@ -135,18 +148,21 @@ class FeatureEngineer:
         print("Adding streak features...")
         
         # Query game results for all teams
+        # Fixed: Use IIF and correct column names (homePoints, awayPoints)
         results = self.db.query("""
             SELECT 
                 tg.teamId,
                 g.id as gameId,
                 g.startDate,
                 CASE 
-                    WHEN tg.teamId = g.homeTeamId THEN g.homeScore > g.awayScore
-                    ELSE g.awayScore > g.homeScore
+                    WHEN tg.teamId = g.homeTeamId THEN 
+                        IIF(g.homePoints > g.awayPoints, 1, 0)
+                    ELSE 
+                        IIF(g.awayPoints > g.homePoints, 1, 0)
                 END as won
             FROM team_games tg
             JOIN games g ON tg.gameId = g.id
-            WHERE g.homeScore IS NOT NULL AND g.awayScore IS NOT NULL
+            WHERE g.homePoints IS NOT NULL AND g.awayPoints IS NOT NULL
             ORDER BY tg.teamId, g.startDate
         """)
         

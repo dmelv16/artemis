@@ -7,22 +7,51 @@ import numpy as np
 class RankingsProcessor:
     def __init__(self, db_conn):
         self.db = db_conn
-        
+         
     def add_features(self, df):
         print("Adding ranking features...")
+        
+        # Always ensure season column exists by deriving from startDate
+        if 'season' not in df.columns:
+            print("  Deriving 'season' column from startDate...")
+            df['startDate'] = pd.to_datetime(df['startDate'])
+            df['season'] = df['startDate'].apply(
+                lambda x: x.year + 1 if x.month >= 8 else x.year
+            )
+        
+        # Ensure week column exists
+        if 'week' not in df.columns:
+            raise ValueError("'week' column is required. Ensure add_week_column() was called before this processor")
+        
+        # Add a unique game index to preserve order and handle duplicates
+        df = df.reset_index(drop=True)
+        df['_game_idx'] = df.index
+        
+        # Ensure proper data types for merge keys
+        df['season'] = df['season'].astype('int64')
+        df['week'] = df['week'].astype('int64')
+        df['homeTeamId'] = df['homeTeamId'].astype('int64')
+        df['awayTeamId'] = df['awayTeamId'].astype('int64')
         
         rankings = self.db.query("""
             SELECT r.season, r.week, r.teamId, r.pollType, r.ranking, r.points as poll_points
             FROM rankings r
             WHERE r.pollType IN ('AP Top 25', 'Coaches Poll')
-            ORDER BY r.season DESC, r.week DESC
+                AND r.ranking IS NOT NULL
+                AND r.seasonType = 'regular'
         """)
         
-        # Ensure df has required columns
-        required_cols = ['season', 'week', 'homeTeamId', 'awayTeamId']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            raise ValueError(f"DataFrame is missing required columns: {missing_cols}")
+        if len(rankings) == 0:
+            print("Warning: No rankings data found")
+            return df
+        
+        # Ensure proper data types in rankings
+        rankings['season'] = rankings['season'].astype('int64')
+        rankings['week'] = rankings['week'].astype('int64')
+        rankings['teamId'] = rankings['teamId'].astype('int64')
+        
+        # Remove duplicates from rankings
+        rankings = rankings.drop_duplicates(subset=['season', 'week', 'teamId', 'pollType'], keep='first')
         
         for poll_type in ['AP Top 25', 'Coaches Poll']:
             poll_short = 'AP' if poll_type == 'AP Top 25' else 'Coaches'
@@ -32,69 +61,49 @@ class RankingsProcessor:
                 print(f"Warning: No rankings found for {poll_type}")
                 continue
             
-            # Merge for home team
-            home_rankings = poll_rankings[['season', 'week', 'teamId', 'ranking', 'poll_points']].copy()
-            home_rankings = home_rankings.rename(columns={
+            # HOME TEAM
+            home_ranks = poll_rankings[['season', 'week', 'teamId', 'ranking', 'poll_points']].copy()
+            home_ranks = home_ranks.rename(columns={
                 'teamId': 'homeTeamId',
                 'ranking': f'home_{poll_short}_rank',
                 'poll_points': f'home_{poll_short}_poll_points'
             })
             
-            # Sort both dataframes
-            home_rankings = home_rankings.sort_values(
-                by=['season', 'homeTeamId', 'week']
-            ).reset_index(drop=True)
-            
-            df = df.sort_values(
-                by=['season', 'homeTeamId', 'week']
-            ).reset_index(drop=True)
-
-            df = pd.merge_asof(
-                df,
-                home_rankings,
-                by=['season', 'homeTeamId'],
-                on='week',
-                direction='backward',
-                suffixes=('', '_dup')
+            # Use a simple merge on exact week match, then forward fill within season/team
+            df = df.merge(
+                home_ranks,
+                on=['season', 'homeTeamId', 'week'],
+                how='left'
             )
             
-            # Drop any duplicate columns that might have been created
-            dup_cols = [col for col in df.columns if col.endswith('_dup')]
-            if dup_cols:
-                df = df.drop(columns=dup_cols)
-
-            # Merge for away team
-            away_rankings = poll_rankings[['season', 'week', 'teamId', 'ranking', 'poll_points']].copy()
-            away_rankings = away_rankings.rename(columns={
+            # Forward fill rankings within each season/team group
+            df = df.sort_values(['season', 'homeTeamId', 'week', '_game_idx'])
+            df[f'home_{poll_short}_rank'] = df.groupby(['season', 'homeTeamId'])[f'home_{poll_short}_rank'].ffill()
+            df[f'home_{poll_short}_poll_points'] = df.groupby(['season', 'homeTeamId'])[f'home_{poll_short}_poll_points'].ffill()
+            
+            # AWAY TEAM
+            away_ranks = poll_rankings[['season', 'week', 'teamId', 'ranking', 'poll_points']].copy()
+            away_ranks = away_ranks.rename(columns={
                 'teamId': 'awayTeamId',
                 'ranking': f'away_{poll_short}_rank',
                 'poll_points': f'away_{poll_short}_poll_points'
             })
             
-            # Sort both dataframes
-            away_rankings = away_rankings.sort_values(
-                by=['season', 'awayTeamId', 'week']
-            ).reset_index(drop=True)
-            
-            df = df.sort_values(
-                by=['season', 'awayTeamId', 'week']
-            ).reset_index(drop=True)
-
-            df = pd.merge_asof(
-                df,
-                away_rankings,
-                by=['season', 'awayTeamId'],
-                on='week',
-                direction='backward',
-                suffixes=('', '_dup')
+            df = df.merge(
+                away_ranks,
+                on=['season', 'awayTeamId', 'week'],
+                how='left'
             )
             
-            # Drop any duplicate columns that might have been created
-            dup_cols = [col for col in df.columns if col.endswith('_dup')]
-            if dup_cols:
-                df = df.drop(columns=dup_cols)
+            # Forward fill rankings within each season/team group
+            df = df.sort_values(['season', 'awayTeamId', 'week', '_game_idx'])
+            df[f'away_{poll_short}_rank'] = df.groupby(['season', 'awayTeamId'])[f'away_{poll_short}_rank'].ffill()
+            df[f'away_{poll_short}_poll_points'] = df.groupby(['season', 'awayTeamId'])[f'away_{poll_short}_poll_points'].ffill()
             
             self._add_derived_features(df, poll_short)
+        
+        # Restore original order and drop helper column
+        df = df.sort_values('_game_idx').drop(columns=['_game_idx']).reset_index(drop=True)
         
         print("Added ranking features")
         return df
@@ -126,7 +135,8 @@ class RankingsProcessor:
                 labels=['Top_5', 'Top_10', 'Top_25', 'Unranked'],
                 right=True
             )
-            df[f'{team_type}_{poll_short}_tier'] = df[f'{team_type}_{poll_short}_tier'].cat.add_categories('Unranked').fillna('Unranked')
+            # Simply fill NaN values with 'Unranked' - no need to add_categories since it's already a label
+            df[f'{team_type}_{poll_short}_tier'] = df[f'{team_type}_{poll_short}_tier'].fillna('Unranked')
         
         df[f'{poll_short}_matchup_type'] = 'Unranked_vs_Unranked'
         both_ranked = df[f'home_{poll_short}_ranked'] & df[f'away_{poll_short}_ranked']
