@@ -113,8 +113,11 @@ class BasketballDataset(Dataset):
             'seasonType', 'tournament', 'gameType'
         ]
         
+        # Add columns ending with _season to exclusion list
+        season_cols = [col for col in self.df.columns if col.endswith('_season')]
+        
         # Combine exclude lists
-        all_exclude = target_cols + exclude_cols
+        all_exclude = target_cols + exclude_cols + season_cols
         
         # Get feature columns
         feature_cols = [col for col in self.df.columns 
@@ -151,6 +154,8 @@ class BasketballDataset(Dataset):
         
         print(f"Features shape: {self.features.shape}")
         print(f"Targets shape: {self.targets.shape}")
+        if season_cols:
+            print(f"Excluded {len(season_cols)} columns ending with '_season': {season_cols[:5]}{'...' if len(season_cols) > 5 else ''}")
     
     def _scale_features(self, mode):
         """Scale features using RobustScaler (handles outliers better)."""
