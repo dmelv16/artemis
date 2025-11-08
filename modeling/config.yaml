@@ -1,0 +1,26 @@
+data:
+  parquet_path: C:\Users\DMelv\Documents\artemis\cbb_master_features.parquet
+  split_date: '2022-01-01'
+  fetch_plays: false  # Set to true if you want dynamic data
+  db_config:
+    server: 'DESKTOP-J9IV3OH'
+    database: 'cbbDB'
+    use_windows_auth: true
+
+model:
+  type: 'basic'  # 'basic' or 'advanced'
+  hidden_dims: [512, 256, 128]
+  dropout: 0.3
+
+training:
+  num_epochs: 50
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 10
+  num_workers: 4
+  
+  # Loss weights
+  spread_weight: 1.0
+  total_weight: 1.0
+  win_weight: 0.1
