@@ -148,7 +148,6 @@ class FeatureEngineer:
         print("Adding streak features...")
         
         # Query game results for all teams
-        # Fixed: Use IIF and correct column names (homePoints, awayPoints)
         results = self.db.query("""
             SELECT 
                 tg.teamId,
@@ -169,12 +168,12 @@ class FeatureEngineer:
         results['startDate'] = pd.to_datetime(results['startDate'])
         
         # Calculate streaks
-        def calculate_streak(group):
+        def calculate_streak(won_series):
             """Calculate current winning/losing streak for each game."""
             streaks = []
             current_streak = 0
             
-            for won in group['won']:
+            for won in won_series:
                 if pd.isna(won):
                     streaks.append(0)
                     current_streak = 0
@@ -185,7 +184,7 @@ class FeatureEngineer:
                     current_streak = current_streak - 1 if current_streak < 0 else -1
                     streaks.append(current_streak)
             
-            return streaks
+            return pd.Series(streaks, index=won_series.index)
         
         results['streak'] = results.groupby('teamId')['won'].transform(calculate_streak)
         
