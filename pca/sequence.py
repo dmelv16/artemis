@@ -190,12 +190,12 @@ class DynamicTeamStateModel(nn.Module):
         # Make predictions
         spread_pred = self.spread_head(matchup_features)
         total_pred = self.total_head(matchup_features)
-        winner_prob = torch.sigmoid(self.winner_head(matchup_features))
+        winner_logits = self.winner_head(matchup_features)
         
         return {
             'spread': spread_pred,
             'total': total_pred,
-            'win_probability': winner_prob
+            'win_probability': winner_logits  # Return raw logits
         }
 
 
@@ -223,10 +223,14 @@ class SequenceTrainer:
         """
         matchup_data = []
         
-        for _, game in games_df.iterrows():
-            home_id = game['homeTeamId']
-            away_id = game['awayTeamId']
-            game_date = game['startDate']
+        # Group games by gameId to get both home and away perspectives
+        unique_games = games_df[games_df['is_home'] == 1].copy()
+        
+        for _, home_game in unique_games.iterrows():
+            game_id = home_game['gameId']
+            game_date = home_game['startDate']
+            home_id = home_game['teamId']
+            away_id = home_game['opponentId']
             
             # Get sequences for both teams leading up to this game
             home_seq = self._get_team_sequence(
@@ -237,14 +241,21 @@ class SequenceTrainer:
             )
             
             if home_seq is not None and away_seq is not None:
+                # Calculate actual outcomes from home team perspective
+                home_score = home_game['points']
+                away_score = home_game['opp_points']
+                spread_actual = home_score - away_score
+                total_actual = home_score + away_score
+                home_won = 1 if home_score > away_score else 0
+                
                 matchup_data.append({
-                    'game_id': game['gameId'],
+                    'game_id': game_id,
                     'date': game_date,
                     'home_sequence': home_seq,
                     'away_sequence': away_seq,
-                    'spread_actual': game.get('spread_actual', 0),
-                    'total_actual': game.get('total_actual', 0),
-                    'home_won': game.get('home_won', 0)
+                    'spread_actual': spread_actual,
+                    'total_actual': total_actual,
+                    'home_won': home_won
                 })
         
         return matchup_data
@@ -357,8 +368,9 @@ class DynamicPipeline:
         games_df = pd.read_parquet(self.games_path)
         
         # Ensure dates are datetime
-        features_df['game_date'] = pd.to_datetime(features_df['game_date'])
+        features_df['startDate'] = pd.to_datetime(features_df['startDate'])
         games_df['startDate'] = pd.to_datetime(games_df['startDate'])
+        features_df = features_df.rename(columns={'startDate': 'game_date'})
         
         # Get feature dimension
         feature_cols = [col for col in features_df.columns 
@@ -371,8 +383,9 @@ class DynamicPipeline:
         all_predictions = []
         
         # Get unique dates for testing
-        test_dates = games_df['startDate'].unique()
-        test_dates.sort()
+        games_df['game_day'] = games_df['startDate'].dt.normalize()
+        test_dates = games_df['game_day'].unique()
+        test_dates = np.sort(test_dates)
         
         # Skip early dates without enough history
         min_date = test_dates[365]  # Start after 1 year of data
@@ -384,18 +397,30 @@ class DynamicPipeline:
         
         for test_date in test_dates:
             # Check if we need to retrain
-            if (current_model is None or 
-                (test_date - last_train_date).days >= retrain_days):
-                
-                print(f"\nRetraining model for {test_date.strftime('%Y-%m-%d')}")
-                
+            should_retrain = (current_model is None or 
+                            last_train_date is None or
+                            pd.Timedelta(test_date - last_train_date).days >= retrain_days)
+            
+            if should_retrain:
+                print(f"\nRetraining model for {pd.Timestamp(test_date).strftime('%Y-%m-%d')}")                
                 # Get training data (all games before test_date)
                 train_games = games_df[games_df['startDate'] < test_date]
                 
                 if len(train_games) < 1000:
+                    # Not enough training data yet, skip all predictions for this date
                     continue
                 
-                # Initialize new model
+                # Prepare training data
+                temp_trainer = SequenceTrainer(DynamicTeamStateModel(input_dim=input_dim))
+                train_data = temp_trainer.prepare_matchup_data(
+                    features_df, train_games, sequence_length
+                )
+                
+                if len(train_data) < 100:  # Skip if not enough training data
+                    # Not enough matchup data, skip all predictions for this date
+                    continue
+                
+                # We have enough data, so initialize and train the model
                 current_model = DynamicTeamStateModel(
                     input_dim=input_dim,
                     hidden_dim=128,
@@ -405,14 +430,6 @@ class DynamicPipeline:
                 )
                 
                 trainer = SequenceTrainer(current_model)
-                
-                # Prepare training data
-                train_data = trainer.prepare_matchup_data(
-                    features_df, train_games, sequence_length
-                )
-                
-                if len(train_data) < 100:  # Skip if not enough training data
-                    continue
                 
                 # ============= FIX #1: SCALE THE DATA =============
                 print(f"  Preparing and scaling {len(train_data)} game sequences...")
@@ -432,13 +449,19 @@ class DynamicPipeline:
                 
                 # Fit new scaler
                 scaler = StandardScaler()
+                if not np.isfinite(all_train_seqs).all():
+                    print("  WARNING: Non-finite values (NaN or Inf) detected in training features. Replacing with 0.")
+                    all_train_seqs = np.nan_to_num(all_train_seqs, nan=0.0, posinf=0.0, neginf=0.0)
                 scaler.fit(all_train_seqs)
                 trainer.scaler = scaler
                 
                 # Transform training sequences
                 for item in train_data:
-                    item['home_sequence'] = scaler.transform(item['home_sequence'])
-                    item['away_sequence'] = scaler.transform(item['away_sequence'])
+                    home_seq_cleaned = np.nan_to_num(item['home_sequence'], nan=0.0, posinf=0.0, neginf=0.0)
+                    away_seq_cleaned = np.nan_to_num(item['away_sequence'], nan=0.0, posinf=0.0, neginf=0.0)
+                    
+                    item['home_sequence'] = scaler.transform(home_seq_cleaned)
+                    item['away_sequence'] = scaler.transform(away_seq_cleaned)
                 
                 print(f"  Scaler fitted on {len(all_train_seqs)} vectors.")
                 
@@ -470,10 +493,10 @@ class DynamicPipeline:
                 optimizer = optim.Adam(current_model.parameters(), lr=0.001)
                 criterion_spread = nn.MSELoss()
                 criterion_total = nn.MSELoss()
-                criterion_winner = nn.BCELoss()
+                criterion_winner = nn.BCEWithLogitsLoss()
                 
                 # Training epochs
-                num_epochs = 5
+                num_epochs = 20
                 for epoch in range(num_epochs):
                     loss = trainer.train_epoch(
                         train_loader, optimizer, 
@@ -481,27 +504,38 @@ class DynamicPipeline:
                     )
                     print(f"    Epoch {epoch+1}/{num_epochs}, Train Loss: {loss:.4f}")
                 
+                # Update last train date AFTER successful training
                 last_train_date = test_date
             
             # ============= MAKE PREDICTIONS WITH SCALING =============
             if current_model is not None and trainer is not None:
-                test_games = games_df[games_df['startDate'] == test_date]
+                # Get only home team perspective games for this date
+                test_games = games_df[
+                    (games_df['game_day'] == test_date) & 
+                    (games_df['is_home'] == 1)
+                ]
                 
                 for _, game in test_games.iterrows():
+                    home_id = game['teamId']
+                    away_id = game['opponentId']
+                    
                     # Get sequences
                     home_seq = trainer._get_team_sequence(
-                        features_df, game['homeTeamId'], 
+                        features_df, home_id, 
                         test_date, sequence_length
                     )
                     away_seq = trainer._get_team_sequence(
-                        features_df, game['awayTeamId'], 
+                        features_df, away_id, 
                         test_date, sequence_length
                     )
                     
                     if home_seq is not None and away_seq is not None:
                         # SCALE the sequences before prediction
-                        home_seq_scaled = trainer.scaler.transform(home_seq)
-                        away_seq_scaled = trainer.scaler.transform(away_seq)
+                        home_seq_cleaned = np.nan_to_num(home_seq, nan=0.0, posinf=0.0, neginf=0.0)
+                        away_seq_cleaned = np.nan_to_num(away_seq, nan=0.0, posinf=0.0, neginf=0.0)
+                        
+                        home_seq_scaled = trainer.scaler.transform(home_seq_cleaned)
+                        away_seq_scaled = trainer.scaler.transform(away_seq_cleaned)
                         
                         # Convert to tensors
                         home_tensor = torch.FloatTensor(home_seq_scaled).unsqueeze(0).to(trainer.device)
@@ -512,15 +546,22 @@ class DynamicPipeline:
                         with torch.no_grad():
                             pred = current_model(home_tensor, away_tensor)
                         
+                        # Calculate actual outcomes
+                        home_score = game['points']
+                        away_score = game['opp_points']
+                        spread_actual = home_score - away_score
+                        total_actual = home_score + away_score
+                        home_won = 1 if home_score > away_score else 0
+                        
                         all_predictions.append({
                             'game_id': game['gameId'],
                             'date': test_date,
                             'spread_pred': pred['spread'].cpu().item(),
                             'total_pred': pred['total'].cpu().item(),
-                            'win_prob': pred['win_probability'].cpu().item(),
-                            'spread_actual': game.get('spread_actual', np.nan),
-                            'total_actual': game.get('total_actual', np.nan),
-                            'home_won': game.get('home_won', np.nan)
+                            'win_prob': torch.sigmoid(pred['win_probability']).cpu().item(),
+                            'spread_actual': spread_actual,
+                            'total_actual': total_actual,
+                            'home_won': home_won
                         })
         
         return pd.DataFrame(all_predictions)
@@ -532,8 +573,8 @@ if __name__ == "__main__":
     # to generate the features_df with evolving PCA/cluster features
     
     pipeline = DynamicPipeline(
-        features_path='rolling_clusters/rolling_features.parquet',
-        games_path='cbb_features.parquet',  # Original games data
+        features_path='rolling_clusters_output/rolling_features.parquet',
+        games_path='cbb_team_features.parquet',  # Original games data
         output_dir='dynamic_models'
     )
     

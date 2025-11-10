@@ -4,7 +4,7 @@ Configuration settings for the feature engineering pipeline.
 
 # Database Configuration
 DB_CONFIG = {
-    'server': 'YOUR_SERVER_NAME',  # e.g., 'localhost' or 'DESKTOP-XXX\SQLEXPRESS'
+    'server': 'DESKTOP-J9IV3OH',  # e.g., 'localhost' or 'DESKTOP-XXX\SQLEXPRESS'
     'database': 'cbbDB',
     'use_windows_auth': True,
     'username': None,  # Set if use_windows_auth = False
@@ -14,8 +14,8 @@ DB_CONFIG = {
 # Pipeline Configuration
 PIPELINE_CONFIG = {
     'season_start': 2006,
-    'season_end': 2024,
-    'output_path': 'cbb_master_features.csv',
+    'season_end': 2025,
+    'output_path': 'cbb_master_features.parquet',
     'rolling_windows': [5, 10, 'season'],
     'save_parquet': True
 }

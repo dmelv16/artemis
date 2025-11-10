@@ -12,26 +12,46 @@ class BettingLinesProcessor:
         print("Adding pre-game betting lines...")
         
         query = """
+        WITH RankedLines AS (
+            SELECT 
+                l.gameId,
+                l.spread,
+                l.overUnder,
+                l.homeMoneyline,
+                l.awayMoneyline,
+                l.spreadOpen,
+                l.overUnderOpen,
+                CASE 
+                    WHEN l.homeMoneyline < 0 THEN ABS(l.homeMoneyline)/(ABS(l.homeMoneyline) + 100.0)
+                    WHEN l.homeMoneyline > 0 THEN 100.0/(l.homeMoneyline + 100.0)
+                    ELSE NULL
+                END as home_implied_prob,
+                CASE 
+                    WHEN l.awayMoneyline < 0 THEN ABS(l.awayMoneyline)/(ABS(l.awayMoneyline) + 100.0)
+                    WHEN l.awayMoneyline > 0 THEN 100.0/(l.awayMoneyline + 100.0)
+                    ELSE NULL
+                END as away_implied_prob,
+                ROW_NUMBER() OVER (PARTITION BY l.gameId ORDER BY l.homeTeamId) as rn
+                -- Try one of these instead:
+                -- ORDER BY l.provider
+                -- ORDER BY l.timestamp DESC
+                -- ORDER BY l.lastUpdated DESC
+                -- ORDER BY l.id DESC
+                -- ORDER BY (SELECT NULL)  -- arbitrary pick if no preference
+            FROM lines l
+        )
         SELECT 
-            l.gameId,
-            l.spread,
-            l.overUnder,
-            l.homeMoneyline,
-            l.awayMoneyline,
-            l.spreadOpen,
-            l.overUnderOpen,
-            CASE 
-                WHEN l.homeMoneyline < 0 THEN ABS(l.homeMoneyline)/(ABS(l.homeMoneyline) + 100.0)
-                WHEN l.homeMoneyline > 0 THEN 100.0/(l.homeMoneyline + 100.0)
-                ELSE NULL
-            END as home_implied_prob,
-            CASE 
-                WHEN l.awayMoneyline < 0 THEN ABS(l.awayMoneyline)/(ABS(l.awayMoneyline) + 100.0)
-                WHEN l.awayMoneyline > 0 THEN 100.0/(l.awayMoneyline + 100.0)
-                ELSE NULL
-            END as away_implied_prob
-        FROM lines l
-        WHERE l.provider = 'consensus' OR l.provider IS NULL
+            gameId,
+            spread,
+            overUnder,
+            homeMoneyline,
+            awayMoneyline,
+            spreadOpen,
+            overUnderOpen,
+            home_implied_prob,
+            away_implied_prob
+        FROM RankedLines
+        WHERE rn = 1
         """
         
         lines_df = self.db.query(query)
