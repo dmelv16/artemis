@@ -32,8 +32,8 @@ class RollingStatsCalculator:
     
     def _get_all_rolling_stats(self, windows):
         """
-        Queries and calculates all rolling/expanding stats for all teams
-        in a single, vectorized operation.
+        Queries and calculates all rolling/expanding stats for all teams.
+        CRITICAL FIX: Apply shift BEFORE assigning to avoid index issues.
         """
         print("  Querying all historical team games...")
         team_games = self.db.query("""
@@ -44,7 +44,7 @@ class RollingStatsCalculator:
             ORDER BY g.startDate
         """)
         
-        # FIX 1: Remove duplicate columns (keep first occurrence)
+        # Remove duplicate columns
         team_games = team_games.loc[:, ~team_games.columns.duplicated()]
         
         # Validate columns
@@ -57,49 +57,45 @@ class RollingStatsCalculator:
             print("Error: No valid stat columns to calculate. Aborting.")
             return pd.DataFrame()
 
-        print("  Pre-calculating rolling statistics (vectorized)...")
-        # Sort by team, then date. This is crucial for groupby operations.
-        team_games.sort_values(by=['teamId', 'startDate'], inplace=True)
-        
-        # CRITICAL FIX: Reset index before grouping to avoid MultiIndex issues
-        team_games = team_games.reset_index(drop=True)
+        print("  Pre-calculating rolling statistics (vectorized with proper shift)...")
+        team_games = team_games.sort_values(by=['teamId', 'startDate']).reset_index(drop=True)
         
         # Group by team
-        grouped = team_games.groupby('teamId')
+        grouped = team_games.groupby('teamId', group_keys=False)
         
-        # Use a dictionary to store new columns for easier management
-        new_cols_dict = {}
-
+        # CRITICAL FIX: Calculate rolling stats WITHOUT shift first
+        rolling_dict = {}
+        
         for window in windows:
             for stat in self.stat_columns:
                 col_name = f'{stat}_season' if window == 'season' else f'{stat}_L{window}'
                 
                 if window == 'season':
-                    # Season-to-date (expanding) average, shifted
-                    stat_series = grouped[stat].expanding(min_periods=1).mean().shift(1)
+                    # Expanding window (season-to-date)
+                    rolling_dict[col_name] = grouped[stat].transform(
+                        lambda x: x.expanding(min_periods=1).mean().shift(1)
+                    )
                 else:
-                    # Fixed window rolling average, shifted
-                    stat_series = grouped[stat].rolling(window=window, min_periods=1).mean().shift(1)
-                
-                # CRITICAL FIX: Reset the index to flatten the MultiIndex
-                stat_series = stat_series.reset_index(level=0, drop=True)
-                new_cols_dict[col_name] = stat_series
-
-        # Create a DataFrame from the dictionary
-        new_stats_df = pd.DataFrame(new_cols_dict, index=team_games.index)
+                    # Fixed rolling window
+                    rolling_dict[col_name] = grouped[stat].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+                    )
         
-        # Combine with the original columns we need
+        # Create DataFrame from dictionary
+        new_stats_df = pd.DataFrame(rolling_dict, index=team_games.index)
+        
+        # Combine with original columns
         rolling_stats_df = pd.concat([
             team_games[['teamId', 'startDate']], 
             new_stats_df
         ], axis=1)
         
-        # CRITICAL FIX: Ensure teamId has no nulls and proper dtype
+        # Ensure proper data types
         rolling_stats_df['teamId'] = rolling_stats_df['teamId'].astype('Int64')
         
-        # Verify no nulls in teamId
+        # Drop rows with null teamIds
         if rolling_stats_df['teamId'].isna().any():
-            print(f"    ERROR: Found {rolling_stats_df['teamId'].isna().sum()} null teamIds after calculation!")
+            print(f"    Removed {rolling_stats_df['teamId'].isna().sum()} rows with null teamIds")
             rolling_stats_df = rolling_stats_df.dropna(subset=['teamId'])
         
         return rolling_stats_df.sort_values(by='startDate').reset_index(drop=True)

@@ -572,7 +572,7 @@ class CBBFeatureEngineer:
 # === EXECUTION ===
 if __name__ == "__main__":
     # Configuration
-    PARQUET_PATH = r"C:\Users\DMelv\Documents\artemis\pca\cbb_team_features.parquet"
+    PARQUET_PATH = r"C:\Users\DMelv\Documents\artemis\cbb_team_features.parquet"
     OUTPUT_DIR = 'feature_output'
     PCA_TRAINING_CUTOFF = '2021-07-01'
     

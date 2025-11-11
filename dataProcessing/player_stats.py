@@ -141,10 +141,14 @@ class PlayerStatsCalculator:
             for col in stat_cols:
                 if window == 'season':
                     new_col = f'starter_{col}_season'
-                    game_aggs[new_col] = grouped[col].expanding(min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.expanding(min_periods=1).mean().shift(1)
+                    )
                 else:
                     new_col = f'starter_{col}_L{window}'
-                    game_aggs[new_col] = grouped[col].rolling(window=window, min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+                    )
         
         # Keep only feature columns for merge
         feature_cols = ['teamId', 'startDate'] + [c for c in game_aggs.columns if 'starter_' in c]
@@ -202,10 +206,14 @@ class PlayerStatsCalculator:
             for col in stat_cols:
                 if window == 'season':
                     new_col = f'bench_{col}_season'
-                    game_aggs[new_col] = grouped[col].expanding(min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.expanding(min_periods=1).mean().shift(1)
+                    )
                 else:
                     new_col = f'bench_{col}_L{window}'
-                    game_aggs[new_col] = grouped[col].rolling(window=window, min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+                    )
         
         # Merge features
         feature_cols = ['teamId', 'startDate'] + [c for c in game_aggs.columns if 'bench_' in c]
@@ -228,9 +236,9 @@ class PlayerStatsCalculator:
         grouped = player_games_sorted.groupby(['teamId', 'athleteId'])
         
         # Use rolling minutes (more stable than gameScore) to identify top players
-        player_games_sorted['rolling_minutes'] = grouped['minutes'].rolling(
-            window=20, min_periods=5
-        ).mean().shift(1).values
+        player_games_sorted['rolling_minutes'] = grouped['minutes'].transform(
+            lambda x: x.rolling(window=20, min_periods=5).mean().shift(1)
+        )
         
         # Fill NaN with 0 so new players aren't randomly ranked high
         player_games_sorted['rolling_minutes'] = player_games_sorted['rolling_minutes'].fillna(0)
@@ -273,10 +281,14 @@ class PlayerStatsCalculator:
             for col in stat_cols:
                 if window == 'season':
                     new_col = f'top3_{col}_season'
-                    game_aggs[new_col] = grouped[col].expanding(min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.expanding(min_periods=1).mean().shift(1)
+                    )
                 else:
                     new_col = f'top3_{col}_L{window}'
-                    game_aggs[new_col] = grouped[col].rolling(window=window, min_periods=1).mean().shift(1).values
+                    game_aggs[new_col] = grouped[col].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+            )
         
         feature_cols = ['teamId', 'startDate'] + [c for c in game_aggs.columns if 'top3_' in c]
         top3_features = game_aggs[feature_cols]
@@ -335,14 +347,18 @@ class PlayerStatsCalculator:
             stat_cols = [c for c in game_aggs.columns if c not in ['teamId', 'gameId', 'startDate']]
             grouped = game_aggs.groupby('teamId')
             
-            for window in windows:  # Now uses all windows including 'season'
+            for window in windows:
                 for col in stat_cols:
                     if window == 'season':
                         new_col = f'{pos}_{col}_season'
-                        game_aggs[new_col] = grouped[col].expanding(min_periods=1).mean().shift(1).values
+                        game_aggs[new_col] = grouped[col].transform(
+                            lambda x: x.expanding(min_periods=1).mean().shift(1)
+                        )
                     else:
                         new_col = f'{pos}_{col}_L{window}'
-                        game_aggs[new_col] = grouped[col].rolling(window=window, min_periods=1).mean().shift(1).values
+                        game_aggs[new_col] = grouped[col].transform(
+                            lambda x: x.rolling(window=window, min_periods=1).mean().shift(1)
+                        )
             
             feature_cols = ['teamId', 'startDate'] + [c for c in game_aggs.columns if f'{pos}_' in c]
             position_features.append(game_aggs[feature_cols])
