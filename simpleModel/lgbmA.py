@@ -62,8 +62,7 @@ class ImprovedSpreadModel:
             'gameId', 'startDate', 'team', 'opponent', 
             'points', 'opp_points', 'won', 'season',
             'actual_margin', 'team_spread', 'spread_target', 'spread_cover',
-            'spread', 'favorite_size', 'is_home',
-            'bench_quality_diff', 'away_implied_prob'
+            'spread', 'favorite_size'
         ]
         
         feature_cols = [col for col in df.columns if col not in exclude_cols]

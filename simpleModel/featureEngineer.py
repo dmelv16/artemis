@@ -436,7 +436,7 @@ class CBBFeatureEngineer:
         # Calculate spread target using team-perspective spread
         # Positive target = team beat the spread (covered)
         spread_df['spread_target'] = spread_df['actual_margin'] - spread_df['team_spread']
-        spread_df['spread_cover'] = (spread_df['spread_target'] > 0).astype(int)
+        spread_df['spread_cover'] = (spread_df['actual_margin'] + spread_df['team_spread'] > 0).astype(int)
         
         # VALIDATION: Check for data leakage
         logger.info("=== SPREAD TARGET VALIDATION ===")
