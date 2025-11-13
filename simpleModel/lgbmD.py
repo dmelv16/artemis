@@ -752,7 +752,31 @@ class OptimizableSpreadBettingModel:
             X = X_numeric
         
         return X
-    
+
+    def save_models(self, output_path, season):
+        """Save trained models and calibration data."""
+        save_path = Path(output_path) / 'models'
+        save_path.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Save LightGBM models as text files
+            if season in self.mean_models:
+                self.mean_models[season].save_model(str(save_path / f'mean_model_s{season}.txt'))
+                self.q16_models[season].save_model(str(save_path / f'q16_model_s{season}.txt'))
+                self.q84_models[season].save_model(str(save_path / f'q84_model_s{season}.txt'))
+            else:
+                logger.warning(f"No models found for season {season} to save.")
+                return
+
+            # Save conformal quantiles (which are just numbers) using joblib
+            if season in self.conformal_quantiles:
+                joblib.dump(self.conformal_quantiles[season], save_path / f'conformal_q_s{season}.pkl')
+            
+            logger.info(f"💾 Models for season {season} saved to {save_path}")
+        
+        except Exception as e:
+            logger.error(f"Failed to save models for season {season}: {e}")
+
     def run(self, test_seasons=None):
         """Execute the betting pipeline"""
         df = self.load_and_prepare_data()
@@ -1270,6 +1294,10 @@ if __name__ == "__main__":
     
     final_results.to_parquet('./final_test_output/holdout_predictions.parquet', index=False)
     
+    logger.info("\n💾 Saving final trained models...")
+    for season in FINAL_TEST_SEASONS:
+        best_model.save_models('./final_test_output', season)
+        
     # ========================================================================
     # STEP 3: Compare against baseline
     # ========================================================================
