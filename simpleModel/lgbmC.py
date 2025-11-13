@@ -1128,8 +1128,39 @@ class ImprovedSpreadBettingModel:
         logger.info(f"ROI: {roi:+.2f}%")
         logger.info(f"Profit: ${total_profit:,.2f}")
         logger.info(f"Bankroll: ${final_bankroll:,.2f} ({bankroll_growth:+.1f}%)")
-    
-    def run(self, test_seasons=None):
+
+    def save_models(self, filepath=None):
+        """
+        Save all trained models and calibration data for future use
+        
+        Args:
+            filepath: Path to save models (default: output_dir/spread_betting_models.pkl)
+        """
+        if filepath is None:
+            filepath = self.output_dir / 'spread_betting_models.pkl'
+        
+        model_data = {
+            'mean_models': self.mean_models,
+            'q16_models': self.q16_models,
+            'q84_models': self.q84_models,
+            'conformal_quantiles': self.conformal_quantiles,
+            'volatility_calibration': self.volatility_calibration,
+            'initial_bankroll': self.initial_bankroll,
+            'max_kelly_fraction': self.max_kelly_fraction,
+            'min_edge_threshold': self.min_edge_threshold,
+            'metadata': {
+                'saved_at': datetime.now().isoformat(),
+                'seasons_trained': list(self.mean_models.keys())
+            }
+        }
+        
+        joblib.dump(model_data, filepath)
+        logger.info(f"\n💾 Models saved to {filepath}")
+        logger.info(f"   Seasons: {model_data['metadata']['seasons_trained']}")
+        
+        return filepath
+        
+    def run(self, test_seasons=None, save_models=True):
         """Execute the improved betting pipeline"""
         logger.info("\n" + "="*80)
         logger.info("🚀 IMPROVED SPREAD BETTING MODEL")
@@ -1151,6 +1182,10 @@ class ImprovedSpreadBettingModel:
         
         # Summary
         self._summarize_overall_performance(predictions_df)
+        
+        # Save models
+        if save_models:
+            self.save_models()
         
         return predictions_df
 
