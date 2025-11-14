@@ -12,6 +12,8 @@ from scipy.stats import norm
 from datetime import datetime
 import warnings
 import optuna
+import json
+import sys
 from optuna.visualization import plot_optimization_history, plot_param_importances
 
 warnings.filterwarnings('ignore')
@@ -795,7 +797,10 @@ class OptimizableSpreadBettingModel:
 
 def objective(trial, data_path, hpo_seasons):
     """
-    Optuna objective function - returns metric to MAXIMIZE.
+    Optuna multi-objective function - returns TWO metrics to MAXIMIZE.
+    
+    Objective 1: ROI (profitability)
+    Objective 2: Bet coverage (statistical significance)
     
     CRITICAL: This function is ONLY evaluated on hpo_seasons (the validation set).
     The final holdout test set is NEVER shown to Optuna.
@@ -804,13 +809,16 @@ def objective(trial, data_path, hpo_seasons):
         trial: Optuna trial object
         data_path: Path to training data
         hpo_seasons: List of seasons to use for HPO evaluation (e.g., [2019, 2020, 2021, 2022, 2023])
+    
+    Returns:
+        tuple: (roi_percentage, bet_coverage_percentage) - both to maximize
     """
     
     # Suggest parameters with CONSTRAINTS to ensure logical ordering
     
     # Strategy thresholds
-    min_edge_threshold = trial.suggest_float('min_edge_threshold', 0.035, 0.070)
-    max_kelly_fraction = trial.suggest_float('max_kelly_fraction', 0.02, 0.08)
+    min_edge_threshold = trial.suggest_float('min_edge_threshold', 0.025, 0.070)
+    max_kelly_fraction = trial.suggest_float('max_kelly_fraction', 0.05, 0.35)
     
     # Uncertainty estimation
     blend_factor = trial.suggest_float('blend_factor', 0.3, 0.9)
@@ -872,58 +880,72 @@ def objective(trial, data_path, hpo_seasons):
         # Calculate ROBUST metrics to optimize
         bets_made = results[results['bet_made']].copy()
         
+        # Minimum viability checks
         if len(bets_made) == 0:
-            return -100.0  # Penalty for no bets
+            return -100.0, 0.0  # No bets = fail both objectives
         
         # Get decided bets (exclude pushes)
         decided_bets = bets_made[bets_made['bet_correct'].notna()]
         
         if len(decided_bets) < 10:
-            return -100.0  # Not enough bets to evaluate
+            return -100.0, 0.0  # Not enough bets to evaluate
         
-        # Calculate multiple metrics
+        # Calculate metrics
         total_wagered = bets_made['bet_amount'].sum()
         total_profit = bets_made['bet_profit'].sum()
         final_bankroll = results['running_bankroll'].iloc[-1]
         
-        # ROI is more stable than raw bankroll
-        roi = total_profit / total_wagered if total_wagered > 0 else -1.0
-        
-        # Sharpe ratio (risk-adjusted return)
-        bet_returns = decided_bets['bet_profit'] / decided_bets['bet_amount']
-        sharpe = (bet_returns.mean() / bet_returns.std() * np.sqrt(252)) if bet_returns.std() > 0 else -10.0
-        
         # Penalize bankruptcy
         if final_bankroll <= 0:
-            return -100.0
+            return -100.0, 0.0
         
-        # Choose optimization target
-        # Option 1: ROI (recommended - stable and interpretable)
-        metric = roi * 100  # Convert to percentage for better scale
+        # OBJECTIVE 1: ROI (profitability)
+        roi = total_profit / total_wagered if total_wagered > 0 else -1.0
+        roi_percentage = roi * 100  # Convert to percentage
         
-        # Option 2: Sharpe ratio (best for risk-adjusted returns)
-        # metric = sharpe
+        # OBJECTIVE 2: Bet Coverage (statistical significance)
+        total_games = len(results)
+        total_bets = len(bets_made)
+        bet_coverage = total_bets / total_games if total_games > 0 else 0
+        bet_coverage_percentage = bet_coverage * 100  # Convert to percentage
         
-        # Option 3: Final bankroll (most intuitive but noisier)
-        # metric = final_bankroll
+        # Optional: Apply soft constraints to prevent extreme solutions
+        # (This helps Optuna focus on reasonable regions of the search space)
         
-        # Option 4: Calmar ratio (return / max drawdown)
-        # running_bankrolls = results['running_bankroll'].values
-        # max_drawdown = (running_bankrolls.max() - running_bankrolls.min()) / running_bankrolls.max()
-        # calmar = roi / max_drawdown if max_drawdown > 0 else -10.0
-        # metric = calmar
+        # Soft penalty for extremely low coverage (< 5%)
+        if bet_coverage < 0.05:
+            roi_percentage *= 0.5  # Reduce ROI appeal if coverage too low
         
-        return metric
+        # Soft penalty for excessive coverage (> 40%)
+        if bet_coverage > 0.40:
+            roi_percentage *= 0.8  # Reduce ROI appeal if betting too much
+        
+        # Log metrics for analysis
+        trial.set_user_attr("roi", roi_percentage)
+        trial.set_user_attr("bet_coverage", bet_coverage_percentage)
+        trial.set_user_attr("total_bets", total_bets)
+        trial.set_user_attr("total_games", total_games)
+        trial.set_user_attr("final_bankroll", final_bankroll)
+        trial.set_user_attr("win_rate", (decided_bets['bet_correct'].astype(bool).sum() / len(decided_bets)))
+        
+        # Sharpe ratio (for additional analysis, not used in optimization)
+        bet_returns = decided_bets['bet_profit'] / decided_bets['bet_amount']
+        sharpe = (bet_returns.mean() / bet_returns.std() * np.sqrt(252)) if bet_returns.std() > 0 else -10.0
+        trial.set_user_attr("sharpe_ratio", sharpe)
+        
+        # Return BOTH objectives (Optuna will find Pareto frontier)
+        return roi_percentage, bet_coverage_percentage
         
     except Exception as e:
         # If the model fails, return a very poor result
         logger.error(f"Trial failed: {e}")
-        return -100.0
+        return -100.0, 0.0
 
 
 def run_optimization(data_path, n_trials=100, hpo_seasons=None, study_name=None):
     """
     Run Optuna hyperparameter optimization with PROPER train/val/test split.
+    Uses multi-objective optimization to balance ROI and bet coverage.
     
     Args:
         data_path: Path to the training data
@@ -941,20 +963,21 @@ def run_optimization(data_path, n_trials=100, hpo_seasons=None, study_name=None)
         # Final test will be 2024-2025 (handled separately)
         hpo_seasons = [2019, 2020, 2021, 2022, 2023]
     
-    # Create a study that MAXIMIZES the objective (ROI)
+    # Create a study that MAXIMIZES BOTH objectives
     study = optuna.create_study(
-        direction='maximize',
+        directions=['maximize', 'maximize'],  # [ROI, Bet Coverage]
         study_name=study_name or 'spread_betting_hpo',
-        sampler=optuna.samplers.TPESampler(seed=42)  # Tree-structured Parzen Estimator
+        sampler=optuna.samplers.TPESampler(seed=42)
     )
     
     # Run the optimization
     logger.info(f"\n{'='*80}")
-    logger.info(f"🔬 STARTING HYPERPARAMETER OPTIMIZATION")
+    logger.info(f"🔬 STARTING MULTI-OBJECTIVE HYPERPARAMETER OPTIMIZATION")
     logger.info(f"{'='*80}")
     logger.info(f"Trials: {n_trials}")
     logger.info(f"HPO Seasons (validation): {hpo_seasons}")
-    logger.info(f"Objective: Maximize ROI (risk-adjusted)")
+    logger.info(f"Objective 1: Maximize ROI (profitability)")
+    logger.info(f"Objective 2: Maximize Bet Coverage (statistical significance)")
     logger.info(f"⚠️  CRITICAL: Final test set (2024-2025) is NEVER shown to Optuna")
     logger.info(f"{'='*80}\n")
     
@@ -964,23 +987,97 @@ def run_optimization(data_path, n_trials=100, hpo_seasons=None, study_name=None)
         show_progress_bar=True
     )
     
-    # Report results
+    # Report results - with multi-objective, we have a PARETO FRONTIER
     logger.info(f"\n{'='*80}")
-    logger.info(f"🎯 OPTIMIZATION COMPLETE")
+    logger.info(f"🎯 OPTIMIZATION COMPLETE - PARETO FRONTIER ANALYSIS")
     logger.info(f"{'='*80}")
-    logger.info(f"Best trial (ROI): {study.best_trial.value:.2f}%")
-    logger.info(f"Best parameters found:")
-    for key, value in study.best_params.items():
-        if isinstance(value, float):
-            logger.info(f"  {key}: {value:.4f}")
-        else:
-            logger.info(f"  {key}: {value}")
+    logger.info(f"Total trials: {len(study.trials)}")
+    logger.info(f"Pareto-optimal solutions: {len(study.best_trials)}")
+    logger.info(f"\nTop 5 Pareto-optimal solutions:")
+    logger.info(f"{'='*80}")
+    logger.info(f"{'#':<4} {'ROI (%)':<12} {'Coverage (%)':<15} {'Win Rate':<12} {'Sharpe':<10}")
+    logger.info(f"{'-'*80}")
+    
+    # Sort by ROI descending for display
+    sorted_trials = sorted(study.best_trials, key=lambda t: t.values[0], reverse=True)[:5]
+    
+    for i, trial in enumerate(sorted_trials, 1):
+        roi = trial.values[0]
+        coverage = trial.values[1]
+        win_rate = trial.user_attrs.get('win_rate', 0)
+        sharpe = trial.user_attrs.get('sharpe_ratio', 0)
+        
+        logger.info(f"{i:<4} {roi:<12.2f} {coverage:<15.2f} {win_rate:<12.2%} {sharpe:<10.2f}")
+    
+    logger.info(f"{'='*80}\n")
+    
+    # Recommend a solution based on your preferences
+    logger.info(f"💡 RECOMMENDED SOLUTION SELECTION:")
+    logger.info(f"{'='*80}")
+    logger.info(f"Choose from the Pareto frontier based on your priorities:")
+    logger.info(f"  • High ROI, Low Coverage → Conservative, high-confidence bets")
+    logger.info(f"  • Medium ROI, Medium Coverage → Balanced approach (RECOMMENDED)")
+    logger.info(f"  • Lower ROI, High Coverage → More bets, more robust statistics")
+    logger.info(f"\nTo select a specific trial, use:")
+    logger.info(f"  best_trial = study.best_trials[index]  # 0 = highest ROI")
     logger.info(f"{'='*80}\n")
     
     return study
 
+def select_best_trial_from_pareto(study, min_coverage=8.0, prefer='balanced'):
+    """
+    Select the best trial from the Pareto frontier based on preferences.
+    
+    Args:
+        study: Optuna study object
+        min_coverage: Minimum acceptable bet coverage (%)
+        prefer: 'roi' (maximize profit), 'balanced' (best ROI*Coverage), or 'coverage' (max bets)
+    
+    Returns:
+        best_trial: Selected trial object
+    """
+    
+    # Filter trials that meet minimum coverage requirement
+    viable_trials = [t for t in study.best_trials if t.values[1] >= min_coverage]
+    
+    if not viable_trials:
+        logger.warning(f"⚠️  No trials met minimum coverage of {min_coverage}%")
+        logger.warning(f"Using best available trial instead")
+        viable_trials = study.best_trials
+    
+    if not viable_trials:
+        logger.error("❌ No viable trials found in study!")
+        return None
+    
+    if prefer == 'roi':
+        # Select highest ROI
+        best_trial = max(viable_trials, key=lambda t: t.values[0])
+        logger.info(f"✓ Selected: Highest ROI strategy")
+        
+    elif prefer == 'coverage':
+        # Select highest coverage (with reasonable ROI > 0)
+        positive_roi_trials = [t for t in viable_trials if t.values[0] > 0]
+        if not positive_roi_trials:
+            logger.warning("⚠️  No trials with positive ROI, using highest coverage from all trials")
+            positive_roi_trials = viable_trials
+        best_trial = max(positive_roi_trials, key=lambda t: t.values[1])
+        logger.info(f"✓ Selected: Highest coverage strategy")
+        
+    else:  # 'balanced'
+        # Select best geometric mean (balances both objectives)
+        # Add small epsilon to avoid issues with negative values
+        best_trial = max(viable_trials, 
+                        key=lambda t: ((max(0.1, t.values[0]) * t.values[1]) ** 0.5))
+        logger.info(f"✓ Selected: Balanced strategy (geometric mean)")
+    
+    logger.info(f"  ROI: {best_trial.values[0]:.2f}%")
+    logger.info(f"  Coverage: {best_trial.values[1]:.2f}%")
+    logger.info(f"  Win Rate: {best_trial.user_attrs.get('win_rate', 0):.2%}")
+    logger.info(f"  Total Bets: {best_trial.user_attrs.get('total_bets', 0)}")
+    
+    return best_trial
 
-def save_optimization_results(study, output_dir='./optuna_results'):
+def save_optimization_results(study, best_params_dict, output_dir='./optuna_results'):
     """Save optimization results and visualizations"""
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
@@ -994,7 +1091,7 @@ def save_optimization_results(study, output_dir='./optuna_results'):
     # Save best parameters as JSON
     import json
     with open(output_path / 'best_params.json', 'w') as f:
-        json.dump(study.best_params, f, indent=2)
+        json.dump(best_params_dict, f, indent=2)
     logger.info(f"💾 Saved best params to {output_path / 'best_params.json'}")
     
     # Create visualizations
@@ -1020,6 +1117,7 @@ def save_optimization_results(study, output_dir='./optuna_results'):
 def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=None):
     """
     Run the "Jitter Test" - multiple independent HPO runs to test parameter stability.
+    Updated for multi-objective optimization.
     
     This tests whether the optimizer consistently finds the same parameters,
     or if results are just "lucky" and unstable.
@@ -1033,6 +1131,7 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
     Returns:
         all_studies: List of Optuna study objects
         stability_report: Dict with stability metrics
+        consensus_params: Dict with consensus parameter values
     """
     
     if hpo_seasons is None:
@@ -1044,11 +1143,13 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
     logger.info(f"Runs: {n_runs}")
     logger.info(f"Trials per run: {n_trials_per_run}")
     logger.info(f"Total trials: {n_runs * n_trials_per_run}")
+    logger.info(f"Mode: Multi-Objective Optimization (ROI + Coverage)")
     logger.info(f"\nThis tests whether parameters are STABLE or just LUCKY")
     logger.info(f"{'='*80}\n")
     
     all_studies = []
     all_best_params = []
+    all_best_metrics = []
     
     for run_idx in range(n_runs):
         logger.info(f"\n{'─'*80}")
@@ -1063,10 +1164,35 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
         )
         
         all_studies.append(study)
-        all_best_params.append(study.best_params)
         
+        best_trial = select_best_trial_from_pareto(
+            study, 
+            min_coverage=8.0,
+            prefer='balanced'
+        )
+
+        # Add robustness check in case no trials are found
+        if best_trial is None:
+            logger.error(f"❌ Run {run_idx + 1}/{n_runs} produced no viable trials. Skipping.")
+            continue # Skip to the next run
+
+        # Get the selected parameters
+        selected_params = best_trial.params
+
+        all_best_params.append(selected_params) # Add to list for stability analysis
+        all_best_metrics.append({
+            'roi': best_trial.values[0],
+            'coverage': best_trial.values[1],
+            'win_rate': best_trial.user_attrs.get('win_rate', 0),
+            'total_bets': best_trial.user_attrs.get('total_bets', 0)
+        })
+
         # Save each run
-        save_optimization_results(study, output_dir=f'./optuna_results_run_{run_idx + 1}')
+        save_optimization_results(
+            study, 
+            selected_params,  # <-- Pass the selected parameters here
+            output_dir=f'./optuna_results_run_{run_idx + 1}'
+        )
     
     # Analyze stability
     logger.info(f"\n{'='*80}")
@@ -1075,6 +1201,7 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
     
     # Convert to DataFrame for easy analysis
     params_df = pd.DataFrame(all_best_params)
+    metrics_df = pd.DataFrame(all_best_metrics)
     
     # Calculate statistics for each parameter
     stability_report = {}
@@ -1106,6 +1233,24 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
         
         logger.info(f"{param:<30} {mean_val:<12.4f} {std_val:<12.4f} {cv:<12.1f} {status:<15}")
     
+    # Analyze metric stability
+    logger.info("\n" + "="*80)
+    logger.info("📊 PERFORMANCE METRICS STABILITY")
+    logger.info("="*80)
+    logger.info(f"{'Metric':<20} {'Mean':<12} {'Std':<12} {'Min':<12} {'Max':<12}")
+    logger.info("─"*80)
+    
+    for metric in ['roi', 'coverage', 'win_rate']:
+        mean_val = metrics_df[metric].mean()
+        std_val = metrics_df[metric].std()
+        min_val = metrics_df[metric].min()
+        max_val = metrics_df[metric].max()
+        
+        if metric == 'roi' or metric == 'coverage':
+            logger.info(f"{metric.upper():<20} {mean_val:<12.2f} {std_val:<12.2f} {min_val:<12.2f} {max_val:<12.2f}")
+        else:
+            logger.info(f"{metric.replace('_', ' ').title():<20} {mean_val:<12.2%} {std_val:<12.2%} {min_val:<12.2%} {max_val:<12.2%}")
+    
     # Overall stability assessment
     avg_cv = np.mean([v['cv'] for v in stability_report.values()])
     
@@ -1113,6 +1258,8 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
     logger.info("🎯 OVERALL STABILITY ASSESSMENT")
     logger.info("="*80)
     logger.info(f"Average Coefficient of Variation: {avg_cv:.1f}%")
+    logger.info(f"Mean ROI across runs: {metrics_df['roi'].mean():.2f}% ± {metrics_df['roi'].std():.2f}%")
+    logger.info(f"Mean Coverage across runs: {metrics_df['coverage'].mean():.2f}% ± {metrics_df['coverage'].std():.2f}%")
     
     if avg_cv < 10:
         logger.info("\n✅ EXCELLENT: Parameters are highly stable across runs.")
@@ -1139,23 +1286,56 @@ def run_stability_test(data_path, n_runs=5, n_trials_per_run=100, hpo_seasons=No
     
     consensus_params = {}
     for param in params_df.columns:
-        consensus_params[param] = float(params_df[param].median())
-        logger.info(f"  {param}: {consensus_params[param]:.4f}")
+        if params_df[param].dtype in [np.int64, np.int32]:
+            consensus_params[param] = int(params_df[param].median())
+            logger.info(f"  {param}: {consensus_params[param]}")
+        else:
+            consensus_params[param] = float(params_df[param].median())
+            logger.info(f"  {param}: {consensus_params[param]:.4f}")
     
     # Save stability report
     stability_output = Path('./stability_analysis')
     stability_output.mkdir(exist_ok=True)
     
     params_df.to_csv(stability_output / 'all_best_params.csv', index=False)
+    metrics_df.to_csv(stability_output / 'all_best_metrics.csv', index=False)
     
     import json
     with open(stability_output / 'consensus_params.json', 'w') as f:
         json.dump(consensus_params, f, indent=2)
     
     with open(stability_output / 'stability_report.json', 'w') as f:
-        json.dump(stability_report, f, indent=2)
+        # Convert numpy types to native Python types for JSON serialization
+        serializable_report = {}
+        for key, value in stability_report.items():
+            serializable_report[key] = {
+                'mean': float(value['mean']),
+                'std': float(value['std']),
+                'cv': float(value['cv']),
+                'status': value['status']
+            }
+        json.dump(serializable_report, f, indent=2)
+    
+    # Save performance metrics summary
+    metrics_summary = {
+        'mean_roi': float(metrics_df['roi'].mean()),
+        'std_roi': float(metrics_df['roi'].std()),
+        'mean_coverage': float(metrics_df['coverage'].mean()),
+        'std_coverage': float(metrics_df['coverage'].std()),
+        'mean_win_rate': float(metrics_df['win_rate'].mean()),
+        'std_win_rate': float(metrics_df['win_rate'].std()),
+        'avg_cv_params': float(avg_cv)
+    }
+    
+    with open(stability_output / 'metrics_summary.json', 'w') as f:
+        json.dump(metrics_summary, f, indent=2)
     
     logger.info(f"\n💾 Stability analysis saved to {stability_output}/")
+    logger.info(f"   - all_best_params.csv: All selected parameters from each run")
+    logger.info(f"   - all_best_metrics.csv: Performance metrics from each run")
+    logger.info(f"   - consensus_params.json: Median parameters (use these!)")
+    logger.info(f"   - stability_report.json: Detailed stability statistics")
+    logger.info(f"   - metrics_summary.json: Performance summary across runs")
     logger.info("="*80 + "\n")
     
     return all_studies, stability_report, consensus_params
@@ -1178,7 +1358,7 @@ if __name__ == "__main__":
     logger.info(f"HPO Validation: {HPO_VALIDATION_SEASONS}")
     logger.info(f"Final Test (holdout): {FINAL_TEST_SEASONS}")
     logger.info(f"{'='*80}\n")
-    
+
     # ========================================================================
     # CHOOSE YOUR MODE
     # ========================================================================
@@ -1193,8 +1373,8 @@ if __name__ == "__main__":
         
         logger.info("\n🔬 RUNNING PARAMETER STABILITY TEST")
         logger.info("="*80)
-        logger.info("This will run 5 independent HPO runs (500 total trials)")
-        logger.info("Expected time: 3-8 hours depending on hardware")
+        logger.info("This will run 1 independent HPO run (100 total trials)")
+        logger.info("Expected time: varies depending on hardware")
         logger.info("="*80 + "\n")
         
         all_studies, stability_report, consensus_params = run_stability_test(
@@ -1207,7 +1387,28 @@ if __name__ == "__main__":
         # Test consensus params on holdout
         logger.info("\n🧪 TESTING CONSENSUS PARAMETERS ON HOLDOUT")
         logger.info("="*80 + "\n")
-        
+
+        try:
+            logger.info("Remapping consensus parameters for model constructor...")
+            # Fix window parameters
+            w1 = consensus_params.pop('window_1')
+            w2 = consensus_params.pop('window_2')
+            w3 = consensus_params.pop('window_3')
+            consensus_params['feature_windows'] = [int(w1), int(w2), int(w3)]
+            
+            # Ensure num_leaves is an integer, as JSON saved it as a float
+            if 'num_leaves' in consensus_params:
+                consensus_params['num_leaves'] = int(consensus_params['num_leaves'])
+            
+            logger.info("Remapping complete.")
+            
+        except KeyError as e:
+            logger.error(f"ERROR: consensus_params is missing a required key: {e}")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Error processing consensus parameters: {e}")
+            sys.exit(1)
+
         consensus_model = OptimizableSpreadBettingModel(
             data_path=DATA_PATH,
             output_dir='./consensus_test_output',
@@ -1219,6 +1420,32 @@ if __name__ == "__main__":
         consensus_results = consensus_model.run(test_seasons=FINAL_TEST_SEASONS)
         consensus_results.to_parquet('./consensus_test_output/holdout_predictions.parquet', index=False)
         
+        # Calculate and display consensus results
+        consensus_bets = consensus_results[consensus_results['bet_made']].copy()
+        consensus_decided = consensus_bets[consensus_bets['bet_correct'].notna()]
+        
+        if len(consensus_decided) > 0:
+            consensus_bankroll = consensus_results['running_bankroll'].iloc[-1]
+            consensus_wagered = consensus_bets['bet_amount'].sum()
+            consensus_profit = consensus_bets['bet_profit'].sum()
+            consensus_roi = (consensus_profit / consensus_wagered * 100) if consensus_wagered > 0 else 0
+            
+            wins = consensus_decided['bet_correct'].astype(bool).sum()
+            win_rate = wins / len(consensus_decided)
+            
+            logger.info(f"\n{'='*80}")
+            logger.info("🏆 CONSENSUS PARAMETERS HOLDOUT TEST RESULTS")
+            logger.info(f"{'='*80}")
+            logger.info(f"Seasons: {FINAL_TEST_SEASONS}")
+            logger.info(f"Initial Bankroll: $100.00")
+            logger.info(f"Final Bankroll: ${consensus_bankroll:,.2f}")
+            logger.info(f"Total Return: {((consensus_bankroll - 100) / 100 * 100):+.1f}%")
+            logger.info(f"ROI: {consensus_roi:+.2f}%")
+            logger.info(f"Win Rate: {win_rate:.1%}")
+            logger.info(f"Total Bets: {len(consensus_bets)}")
+            logger.info(f"Bet Coverage: {len(consensus_bets) / len(consensus_results) * 100:.1f}%")
+            logger.info(f"{'='*80}\n")
+        
         logger.info("\n✅ STABILITY TEST COMPLETE")
         logger.info("="*80)
         logger.info("Review stability_analysis/ to assess parameter robustness")
@@ -1227,23 +1454,42 @@ if __name__ == "__main__":
         sys.exit(0)
     
     # ========================================================================
-    # MODE 2: STANDARD SINGLE-RUN OPTIMIZATION (Default)
+    # MODE 2: LOAD SAVED PARAMETERS (if not running stability test)
     # ========================================================================
     
-    logger.info("\n🔬 PHASE 1: HYPERPARAMETER OPTIMIZATION (Single Run)")
+    logger.info(f"\n🧪 LOADING SAVED PARAMETERS")
     logger.info("="*80)
-    logger.info("Running single optimization run with 100 trials")
-    logger.info("For robustness testing, run: python lgbmC_optuna.py stability")
-    logger.info("="*80 + "\n")
-    
-    study = run_optimization(
-        data_path=DATA_PATH,
-        n_trials=100,
-        hpo_seasons=HPO_VALIDATION_SEASONS
-    )
-    
-    save_optimization_results(study, output_dir='./optuna_results')
-    
+    logger.info("Loading consensus parameters from stability_analysis/consensus_params.json\n")
+
+    # Load the parameters saved by the stability test
+    try:
+        with open('./stability_analysis/consensus_params.json', 'r') as f:
+            consensus_params = json.load(f)
+    except FileNotFoundError:
+        logger.error("ERROR: stability_analysis/consensus_params.json not found.")
+        logger.error("Please run the 'stability' mode first: python lgbmD.py stability")
+        sys.exit(1)
+        
+    try:
+        # Fix window parameters
+        w1 = consensus_params.pop('window_1')
+        w2 = consensus_params.pop('window_2')
+        w3 = consensus_params.pop('window_3')
+        consensus_params['feature_windows'] = [int(w1), int(w2), int(w3)]
+        
+        # Ensure num_leaves is an integer, as JSON saved it as a float
+        if 'num_leaves' in consensus_params:
+            consensus_params['num_leaves'] = int(consensus_params['num_leaves'])
+        
+        logger.info("Successfully loaded, re-mapped window parameters, and cast num_leaves to int.")
+        
+    except KeyError as e:
+        logger.error(f"ERROR: consensus_params.json is missing a required key: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error processing parameters: {e}")
+        sys.exit(1)
+        
     # ========================================================================
     # STEP 2: Evaluate best parameters on FINAL HOLDOUT TEST SET
     # ========================================================================
@@ -1257,7 +1503,7 @@ if __name__ == "__main__":
         data_path=DATA_PATH,
         output_dir='./final_test_output',
         initial_bankroll=100,
-        **study.best_params
+        **consensus_params
     )
     best_model.set_quiet_mode(False)
     
@@ -1273,7 +1519,7 @@ if __name__ == "__main__":
         total_profit = final_bets['bet_profit'].sum()
         final_roi = (total_profit / total_wagered * 100) if total_wagered > 0 else 0
         
-        wins = final_decided['bet_correct'].sum()
+        wins = final_decided['bet_correct'].astype(bool).sum()
         win_rate = wins / len(final_decided)
         
         bet_returns = final_decided['bet_profit'] / final_decided['bet_amount']
@@ -1297,7 +1543,7 @@ if __name__ == "__main__":
     logger.info("\n💾 Saving final trained models...")
     for season in FINAL_TEST_SEASONS:
         best_model.save_models('./final_test_output', season)
-        
+
     # ========================================================================
     # STEP 3: Compare against baseline
     # ========================================================================
@@ -1364,7 +1610,7 @@ if __name__ == "__main__":
     logger.info("  The ONLY metric you can trust is the Final Holdout Test result.")
     logger.info("  HPO validation performance will be optimistically biased.")
     logger.info("\nNext steps:")
-    logger.info("  1. Run stability test: python lgbmC_optuna.py stability")
+    logger.info("  1. Run stability test: python lgbmD.py stability")
     logger.info("  2. Review parameter importances in optuna_results/")
     logger.info("  3. If params are stable, deploy for 2026 season")
     logger.info("  4. Consider feature engineering for even better edge")
